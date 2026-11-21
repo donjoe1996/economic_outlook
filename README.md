@@ -453,9 +453,26 @@ listed above is refused, so it cannot run commands or edit files.
 - **Model switch** in the chat header: **Haiku** (default: fast, uses the
   least of your plan), **Sonnet** or **Opus** (more careful reasoning for
   harder questions; Opus uses the most). The choice is remembered in the
-  browser. `IEO_CHAT_MODEL` sets the default. On a simple question all three
-  answered in 12–13 s with ~7k tokens. The difference shows on questions
-  that need several datasets weighed against each other.
+  browser. `IEO_CHAT_MODEL` sets the default. The difference shows on
+  questions that need several datasets weighed against each other.
+- **Speed** (`backend/ai.py`, measured with Haiku: from 12–13 s per answer to
+  about 3–8 s, with the first words on screen after 2–5 s):
+  - *A process waiting in advance.* Starting Claude Code takes 2–4 s before
+    the model sees anything. So one process per model is started when the
+    chat is shown or the model is switched (`POST /api/chat/warm`). It waits
+    for input (`--input-format stream-json`) and uses no tokens until a
+    question arrives. After each answer a fresh one is started. A waiting
+    process is replaced after 10 minutes and stopped when the server stops.
+  - *Streaming.* The answer appears as it is written. The page polls the job
+    every 200 ms and shows its partial text.
+  - *Done at the last word.* The answer is complete at the model's
+    `message_stop`. Claude Code can spend another ~2.5 s on bookkeeping
+    before reporting, and that time is skipped.
+  - *Little thinking.* Thinking is switched off for the chat
+    (`CLAUDE_CODE_DISABLE_THINKING`, `alwaysThinkingEnabled: false`). Some
+    models still think briefly on open "why" questions; those take longest
+    (about 6–9 s).
+  - *Fact sheet cached* until the data changes (0.5 s per question saved).
 - **Checked numbers.** Every number in the answer is matched against the data
   that was sent (allowing rounding and Indonesian number style). Any that
   isn't found is shown under the answer as unverified, together with the

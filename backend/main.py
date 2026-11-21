@@ -265,6 +265,13 @@ def chat(body: ChatBody):
     return jobs.start("chat", "Claude menjawab pertanyaan", work).view()
 
 
+@app.post("/api/chat/warm")
+def chat_warm(body: dict):
+    """Start a Claude Code process for this model ahead of time (no tokens are
+    used until a question arrives), so the first answer comes faster."""
+    return {"warm": ai.warm(str(body.get("model") or ai.CHAT_MODEL))}
+
+
 @app.post("/api/stocks/{code}/research")
 def stock_research(code: str):
     code = code.strip().upper()

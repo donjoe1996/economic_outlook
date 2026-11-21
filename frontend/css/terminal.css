@@ -326,7 +326,8 @@ dialog.adm-dlg::backdrop { background: rgba(0, 0, 0, .5); -webkit-backdrop-filte
 .eo-chat-msg.err { align-self: flex-start; color: var(--color-bad); border: 1px solid var(--color-bad); }
 .eo-chat-msg.busy { color: var(--color-fg-muted); font-style: italic; animation: eo-chat-pulse 1.4s ease-in-out infinite; }
 @keyframes eo-chat-pulse { 50% { opacity: .45; } }
-@media (prefers-reduced-motion: reduce) { .eo-chat-msg.busy { animation: none; } }
+.eo-chat-msg.streaming > :last-child::after { content: "▍"; color: var(--color-fg-muted); animation: eo-chat-pulse 1s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .eo-chat-msg.busy, .eo-chat-msg.streaming > :last-child::after { animation: none; } }
 .eo-chat-msg p { margin: 0 0 8px; } .eo-chat-msg p:last-child { margin-bottom: 0; }
 .eo-chat-msg ul, .eo-chat-msg ol { margin: 4px 0 8px; padding-left: 22px; }
 .eo-chat-msg li { margin: 2px 0; }

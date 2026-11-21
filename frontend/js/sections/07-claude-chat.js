@@ -5,6 +5,10 @@
  * answer is checked against that data: numbers it can't find are listed
  * under the answer. The last three exchanges go along, so follow-ups work.
  *
+ * Speed: the server keeps a Claude Code process waiting per model (warmed when
+ * the chat is shown and when the model is switched), and the answer streams in
+ * as it is written: the job is polled every 200 ms and its partial text shown.
+ *
  * The conversation is kept in sessionStorage (this tab only). Answers are
  * escaped first and then given a little Markdown (bold, code, lists,
  * headings), so nothing in an answer can inject HTML.
@@ -13,7 +17,7 @@
   const KEY = 'eo-chat-v2';
   // The model switch: Haiku answers fast and cheap; Sonnet and Opus reason more carefully, slower.
   const MODELS = [
-    ['haiku', 'Haiku', 'Cepat dan paling hemat (±10–15 dtk). Cukup untuk sebagian besar pertanyaan.'],
+    ['haiku', 'Haiku', 'Cepat dan paling hemat (jawaban selesai ±3–9 dtk). Cukup untuk sebagian besar pertanyaan.'],
     ['sonnet', 'Sonnet', 'Lebih teliti merangkai beberapa data; sedikit lebih lambat.'],
     ['opus', 'Opus', 'Paling teliti untuk pertanyaan yang rumit; paling lambat dan paling banyak memakai kuota.'],
   ];
@@ -78,7 +82,7 @@
     return out.slice(-3);
   }
 
-  function render(busyText) {
+  function render(busyText, partial) {
     const box = document.getElementById('eo-chat-body'); if (!box) return;
     const log = $('#eo-chat-log', box);
     log.replaceChildren(...state.msgs.map(bubble));
@@ -90,7 +94,10 @@
       intro.append(chips);
       log.append(intro);
     }
-    if (busyText) log.append(el('div', 'eo-chat-msg ai busy', busyText));
+    if (partial) {
+      const b = el('div', 'eo-chat-msg ai streaming'); b.innerHTML = md(partial);   // safe: md() escapes
+      log.append(b);
+    } else if (busyText) log.append(el('div', 'eo-chat-msg ai busy', busyText));
     $('#eo-chat-new', box).hidden = !state.msgs.length;
     log.scrollTop = log.scrollHeight;
   }
@@ -106,8 +113,16 @@
     state.msgs.push({ role: 'user', text: q }); save();
     render('Claude sedang menjawab…');
     try {
-      const out = await EOJobs.run('/api/chat', { question: q, history: hist, model });
-      const r = out.result || {};
+      // follow the job ourselves (not EOJobs.run): faster polling, and the partial text is shown
+      let job = await EOJobs.api('POST', '/api/chat', { question: q, history: hist, model });
+      let shown = '';
+      while (job.state === 'running') {
+        await new Promise((r) => setTimeout(r, 200));
+        job = await EOJobs.api('GET', '/api/jobs/' + job.id);
+        if (job.partial && job.partial !== shown) { shown = job.partial; render(null, shown); }
+      }
+      if (job.state === 'error') throw new Error(job.error);
+      const r = job.result || {};
       state.msgs.push({ role: 'ai', text: r.answer || '(tanpa jawaban)', used: r.used || [], unverified: r.unverified || [], model: r.model });
     } catch (e) {
       state.msgs.push({ role: 'ai', error: true, text: e.message });
@@ -142,6 +157,7 @@
         model = id;
         try { localStorage.setItem(MKEY, id); } catch (e) { /* ignore */ }
         sw.querySelectorAll('.eo-chat-model').forEach((x) => x.setAttribute('aria-checked', String(x === bt)));
+        warm();
       });
       sw.append(bt);
     });
@@ -150,6 +166,9 @@
     box.replaceChildren(head, el('div', 'eo-chat-log'), form);
     $('.eo-chat-log', box).id = 'eo-chat-log';
     render();
+    warm();
   }
+  // have a Claude Code process for the chosen model ready before the first question (uses no tokens)
+  function warm() { EOJobs.api('POST', '/api/chat/warm', { model }).catch(() => { /* no Claude Code: the answer says why */ }); }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount); else mount();
 })();

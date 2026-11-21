@@ -204,3 +204,104 @@ print(json.dumps({{"type": "result", "subtype": "success", "is_error": False, "r
     assert argv[argv.index("--model") + 1] == "opus" and out["model"] == "opus"
     with pytest.raises(ValueError, match="tidak dikenal"):
         ai.chat("BI rate?", None, cfg=cfg, store=st, facts="", model="gpt-x")
+
+
+# ---------------------------------------------------------------- speed
+@pytest.fixture(autouse=True)
+def _no_warm_leftovers():
+    yield
+    ai._stop_warm()
+
+
+def _streaming_claude(tmp_path, log):
+    """A fake `claude -p --input-format stream-json`: notes when it started,
+    waits for one user message, streams it back in two pieces."""
+    script = tmp_path / "claude"
+    script.write_text(f"""#!{sys.executable}
+import json, os, sys, time
+started = time.time()
+msg = json.loads(sys.stdin.readline())
+json.dump({{"argv": sys.argv[1:], "started": started, "got": time.time(), "msg": msg,
+           "thinking": [os.environ.get("MAX_THINKING_TOKENS"), os.environ.get("CLAUDE_CODE_DISABLE_THINKING")]}},
+          open({str(log)!r}, "w"))
+ev = lambda e: print(json.dumps({{"type": "stream_event", "event": e}}), flush=True)
+ev({{"type": "message_start", "message": {{"usage": {{"input_tokens": 10, "cache_read_input_tokens": 100}}}}}})
+for piece in ["BI Rate ", "5,75% (Sep'26)."]:
+    print(json.dumps({{"type": "stream_event", "event": {{"type": "content_block_delta", "delta": {{"type": "text_delta", "text": piece}}}}}}), flush=True)
+    time.sleep(0.15)
+ev({{"type": "message_delta", "usage": {{"output_tokens": 5}}}})
+ev({{"type": "message_stop"}})
+time.sleep(float(os.environ.get("FAKE_BOOKKEEPING", "0")))     # Claude Code's post-turn summary
+print(json.dumps({{"type": "result", "subtype": "success", "is_error": False, "result": "BI Rate 5,75% (Sep'26).",
+                  "usage": {{"input_tokens": 10, "output_tokens": 5}}}}))
+""")
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return str(script)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="uses a POSIX script as the fake claude")
+def test_chat_streams_the_answer_as_it_is_written(chat_env, tmp_path, monkeypatch):
+    cfg, st = chat_env
+    log = tmp_path / "call.json"
+    monkeypatch.setenv("CLAUDE_BIN", _streaming_claude(tmp_path, log))
+    from backend.jobs import Job
+    job = Job(id="1", kind="chat", title="t")
+    seen = []
+    real = job.partial
+    monkeypatch.setattr(job, "partial", lambda t: (seen.append(t), real(t)))
+    monkeypatch.setenv("FAKE_BOOKKEEPING", "5")
+    import time
+    t0 = time.time()
+    out = ai.chat("BI rate sekarang?", None, progress=job, cfg=cfg, store=st, facts="")
+    assert time.time() - t0 < 3                                                # done at message_stop, not at "result"
+    assert out["answer"] == "BI Rate 5,75% (Sep'26)." and out["unverified"] == [] and out["tokens"] == 115
+    assert seen[0] == "BI Rate " and seen[-1] == out["answer"] and job.view()["partial"] == out["answer"]
+    call = json.loads(log.read_text())
+    assert call["msg"]["type"] == "user" and call["msg"]["message"]["content"].rstrip().endswith("BI rate sekarang?")
+    assert call["thinking"] == ["0", "1"]                                      # no thinking for the chat
+    argv = call["argv"]
+    assert argv[argv.index("--input-format") + 1] == "stream-json" and "--include-partial-messages" in argv
+    assert argv[argv.index("--tools") + 1] == ""
+
+
+@pytest.mark.skipif(os.name == "nt", reason="uses a POSIX script as the fake claude")
+def test_a_warmed_process_is_used_and_replaced(chat_env, tmp_path, monkeypatch):
+    cfg, st = chat_env
+    log = tmp_path / "call.json"
+    monkeypatch.setenv("CLAUDE_BIN", _streaming_claude(tmp_path, log))
+    assert ai.warm("haiku") and not ai.warm("gpt-x")
+    first = ai._warm["haiku"][0]
+    import time
+    time.sleep(0.5)
+    ai.chat("BI rate?", None, cfg=cfg, store=st, facts="", model="haiku")
+    call = json.loads(log.read_text())
+    assert call["got"] - call["started"] >= 0.4                     # it was started before the question
+    for _ in range(50):                                             # a fresh one is waiting for the next question
+        if "haiku" in ai._warm:
+            break
+        time.sleep(0.05)
+    assert ai._warm["haiku"][0] is not first and first.poll() is not None
+
+
+@pytest.mark.skipif(os.name == "nt", reason="uses a POSIX script as the fake claude")
+def test_a_warm_process_from_another_claude_is_not_used(chat_env, tmp_path, monkeypatch):
+    cfg, st = chat_env
+    (tmp_path / "a").mkdir(); (tmp_path / "b").mkdir()
+    monkeypatch.setenv("CLAUDE_BIN", _streaming_claude(tmp_path / "a", tmp_path / "a.json"))
+    ai.warm("haiku")
+    monkeypatch.setenv("CLAUDE_BIN", _streaming_claude(tmp_path / "b", tmp_path / "b.json"))
+    ai.chat("BI rate?", None, cfg=cfg, store=st, facts="", model="haiku")
+    assert (tmp_path / "b.json").exists() and not (tmp_path / "a.json").exists()
+
+
+def test_the_fact_sheet_is_cached_until_the_data_changes(chat_env, monkeypatch):
+    from backend import chat_context
+    cfg, st = chat_env
+    sys.path.insert(0, str(chat_context.ROOT / "scripts"))
+    import insights as ins
+    calls = []
+    monkeypatch.setattr(ins, "digest_text", lambda: calls.append(1) or f"fakta {len(calls)}")
+    chat_context._FACTS.clear()
+    assert chat_context._facts(st) == "fakta 1" and chat_context._facts(st) == "fakta 1"
+    st.put("ikk", header=["Periode", "IKK"], source="t", values=[["Okt'26", "120.0"]])     # rewrites the index
+    assert chat_context._facts(st) == "fakta 2" and len(calls) == 2

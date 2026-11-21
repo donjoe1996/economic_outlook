@@ -55,11 +55,23 @@ LAST_ROWS = 8
 CODE = re.compile(r"\b[A-Z]{4}\b")
 
 
-def _facts() -> str:
+_FACTS: dict = {}
+
+
+def _facts(store=None) -> str:
+    """The fact sheet, cached until the data changes (the store's index is
+    rewritten on every save or pull)."""
     sys.path.insert(0, str(ROOT / "scripts"))
     import insights as ins  # scripts/insights.py (wraps scripts/digest.py)
 
-    return ins.digest_text()
+    idx = (store.path("datapackage.json") if store is not None else None)
+    stamp = idx.stat().st_mtime_ns if idx is not None and idx.exists() else None
+    if stamp is not None and _FACTS.get("stamp") == stamp:
+        return _FACTS["text"]
+    text = ins.digest_text()
+    if stamp is not None:
+        _FACTS.update(stamp=stamp, text=text)
+    return text
 
 
 def match_datasets(question: str, cfg, available: set[str]) -> list[str]:
@@ -173,7 +185,7 @@ def build(question: str, cfg, store, history: list[dict] | None = None, facts: s
             if b:
                 blocks.append(b)
                 used.append(f"Saham {code}")
-    facts = facts if facts is not None else _facts()
+    facts = facts if facts is not None else _facts(store)
     hist = ""
     for t in (history or [])[-3:]:
         q, a = str(t.get("q", ""))[:600], str(t.get("a", ""))[:900]
