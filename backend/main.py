@@ -130,6 +130,7 @@ class ChatTurn(BaseModel):
 class ChatBody(BaseModel):
     question: str
     history: list[ChatTurn] = []
+    model: str | None = None      # haiku | sonnet | opus (the chat's model switch)
 
 
 class ApplyBody(BaseModel):
@@ -259,7 +260,7 @@ def chat(body: ChatBody):
 
     def work(p: Job):
         svc = service()   # also makes sure data/store exists (first start converts the old copy)
-        return ai.chat(body.question, hist, progress=p, cfg=svc.cfg, store=svc.store)
+        return ai.chat(body.question, hist, progress=p, cfg=svc.cfg, store=svc.store, model=body.model)
 
     return jobs.start("chat", "Claude menjawab pertanyaan", work).view()
 

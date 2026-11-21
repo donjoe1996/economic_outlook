@@ -279,12 +279,15 @@ Pakai HANYA angka yang ada di FAKTA dan DATA TERKAIT di bawah. Jangan menghitung
 Bila data yang dibutuhkan tidak ada atau sudah lama, katakan terus terang.
 Korelasi bukan sebab-akibat. Tidak ada rekomendasi beli atau jual. Paragraf pendek dan daftar berpoin; tanpa tabel."""
 
-# Fast and cheap by default; set IEO_CHAT_MODEL (e.g. "sonnet") for longer reasoning.
-CHAT_MODEL = os.environ.get("IEO_CHAT_MODEL", "haiku")
+# The chat's model, chosen per question on the page. Claude Code resolves the
+# alias to the latest model of that family. Haiku is the default: fast and cheap;
+# Sonnet and Opus reason more carefully and take longer. IEO_CHAT_MODEL sets the default.
+CHAT_MODELS = ("haiku", "sonnet", "opus")
+CHAT_MODEL = os.environ.get("IEO_CHAT_MODEL", "haiku") if os.environ.get("IEO_CHAT_MODEL", "haiku") in CHAT_MODELS else "haiku"
 
 
 def chat(question: str, history: list[dict] | None = None, progress: Progress = NO_PROGRESS,
-         cfg=None, store=None, facts: str | None = None, runner=None) -> dict:
+         cfg=None, store=None, facts: str | None = None, runner=None, model: str | None = None) -> dict:
     """One chat turn: Python picks the data, Claude Code answers in one go
     (no tools, short system prompt), Python checks the numbers."""
     from . import chat_context
@@ -296,22 +299,25 @@ def chat(question: str, history: list[dict] | None = None, progress: Progress = 
         raise ValueError("Pertanyaannya kosong.")
     if len(question) > 2000:
         raise ValueError("Pertanyaannya terlalu panjang (maks. 2000 karakter).")
+    model = (model or CHAT_MODEL).strip().lower()
+    if model not in CHAT_MODELS:
+        raise ValueError(f"Model '{model}' tidak dikenal; pilih {', '.join(CHAT_MODELS)}.")
     cfg = cfg or load_config()
     store = store or Store()
     if not store.ids():
         raise AIUnavailable("Belum ada data di penyimpanan (data/store). Klik ⟳ Tarik dulu.")
     progress.step("Memilih data yang relevan")
     pack = chat_context.build(question, cfg, store, history, facts=facts)
-    progress.step("Claude menjawab dari: " + ", ".join(pack["used"]))
+    progress.step(f"Claude {model.capitalize()} menjawab dari: " + ", ".join(pack["used"]))
     if runner is not None:
         answer = runner(pack["prompt"])
     else:
-        args = ["--no-session-persistence", "--system-prompt", CHAT_RULES, "--tools", "", "--model", CHAT_MODEL]
+        args = ["--no-session-persistence", "--system-prompt", CHAT_RULES, "--tools", "", "--model", model]
         with tempfile.TemporaryDirectory(prefix="ieo-chat-") as empty:
-            result = _run(args, pack["prompt"], Path(empty), progress, timeout=180, show=())
+            result = _run(args, pack["prompt"], Path(empty), progress, timeout=300, show=())
         answer = str(result.get("result") or "").strip()
         u = result.get("usage") or {}
         tokens = sum(int(u.get(k) or 0) for k in ("input_tokens", "cache_creation_input_tokens",
                                                  "cache_read_input_tokens", "output_tokens"))
-    return {"answer": answer, "used": pack["used"], "tokens": tokens if runner is None else None,
+    return {"answer": answer, "used": pack["used"], "model": model, "tokens": tokens if runner is None else None,
             "unverified": chat_context.unverified_numbers(answer, pack["context"], question)}

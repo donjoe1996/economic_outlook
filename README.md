@@ -448,9 +448,14 @@ listed above is refused, so it cannot run commands or edit files.
   P/BV and P/E computed in Python. The previous question's stock carries
   over, so "lalu arus asingnya?" (and its foreign flows?) works.
 - **One turn, no tools.** It uses a short system prompt instead of Claude
-  Code's default prompt, a fast model (`haiku`; set `IEO_CHAT_MODEL=sonnet`
-  for longer reasoning), and answers of about 120 words. The last three
+  Code's default prompt, and answers of about 120 words. The last three
   exchanges go along for context.
+- **Model switch** in the chat header: **Haiku** (default: fast, uses the
+  least of your plan), **Sonnet** or **Opus** (more careful reasoning for
+  harder questions; Opus uses the most). The choice is remembered in the
+  browser. `IEO_CHAT_MODEL` sets the default. On a simple question all three
+  answered in 12–13 s with ~7k tokens. The difference shows on questions
+  that need several datasets weighed against each other.
 - **Checked numbers.** Every number in the answer is matched against the data
   that was sent (allowing rounding and Indonesian number style). Any that
   isn't found is shown under the answer as unverified, together with the

@@ -184,3 +184,23 @@ def test_chat_follow_up_keeps_the_stock_and_reads_suffixes():
     q = "Lalu bagaimana arus asingnya?"
     assert "flow" in chat_context.match_datasets(q, cfg, {"flow", "birate"})          # asingnya -> asing
     assert chat_context.match_datasets("Kenapa BI menaikkan suku bunga?", cfg, {"ikk", "birate"}) == ["birate"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="uses a POSIX script as the fake claude")
+def test_chat_uses_the_chosen_model_and_refuses_others(chat_env, tmp_path, monkeypatch):
+    cfg, st = chat_env
+    log = tmp_path / "argv.json"
+    script = tmp_path / "claude"
+    script.write_text(f"""#!{sys.executable}
+import json, sys
+sys.stdin.read()
+json.dump(sys.argv[1:], open({str(log)!r}, "w"))
+print(json.dumps({{"type": "result", "subtype": "success", "is_error": False, "result": "ok"}}))
+""")
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("CLAUDE_BIN", str(script))
+    out = ai.chat("BI rate?", None, cfg=cfg, store=st, facts="", model="Opus")
+    argv = json.loads(log.read_text())
+    assert argv[argv.index("--model") + 1] == "opus" and out["model"] == "opus"
+    with pytest.raises(ValueError, match="tidak dikenal"):
+        ai.chat("BI rate?", None, cfg=cfg, store=st, facts="", model="gpt-x")

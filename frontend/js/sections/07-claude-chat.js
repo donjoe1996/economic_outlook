@@ -11,6 +11,16 @@
  */
 (function () {
   const KEY = 'eo-chat-v2';
+  // The model switch: Haiku answers fast and cheap; Sonnet and Opus reason more carefully, slower.
+  const MODELS = [
+    ['haiku', 'Haiku', 'Cepat dan paling hemat (±10–15 dtk). Cukup untuk sebagian besar pertanyaan.'],
+    ['sonnet', 'Sonnet', 'Lebih teliti merangkai beberapa data; sedikit lebih lambat.'],
+    ['opus', 'Opus', 'Paling teliti untuk pertanyaan yang rumit; paling lambat dan paling banyak memakai kuota.'],
+  ];
+  const MKEY = 'eo-chat-model';
+  let model = 'haiku';
+  try { model = localStorage.getItem(MKEY) || 'haiku'; } catch (e) { /* private mode */ }
+  if (!MODELS.some((m) => m[0] === model)) model = 'haiku';
   const SUGGEST = [
     'Kenapa IHSG tertinggal dari bursa Asia tahun ini?',
     'Apa arti kenaikan BI Rate untuk saham bank?',
@@ -49,7 +59,10 @@
     const b = el('div', 'eo-chat-msg ' + (m.role === 'user' ? 'me' : m.error ? 'err' : 'ai'));
     if (m.role === 'user') { b.textContent = m.text; return b; }
     b.innerHTML = md(m.text);   // safe: md() escapes before adding tags
-    if (m.used && m.used.length) b.append(el('div', 'eo-chat-used', 'Data: ' + m.used.join(' · ')));
+    if (m.used && m.used.length) {
+      const label = (MODELS.find((x) => x[0] === m.model) || [])[1];
+      b.append(el('div', 'eo-chat-used', (label ? 'Claude ' + label + ' · ' : '') + 'Data: ' + m.used.join(' · ')));
+    }
     if (m.unverified && m.unverified.length) {
       b.append(el('div', 'eo-chat-warn', '⚠ Angka tidak ditemukan di data yang dikirim: ' + m.unverified.join(', ') + '. Cek sebelum dipakai.'));
     }
@@ -93,9 +106,9 @@
     state.msgs.push({ role: 'user', text: q }); save();
     render('Claude sedang menjawab…');
     try {
-      const out = await EOJobs.run('/api/chat', { question: q, history: hist });
+      const out = await EOJobs.run('/api/chat', { question: q, history: hist, model });
       const r = out.result || {};
-      state.msgs.push({ role: 'ai', text: r.answer || '(tanpa jawaban)', used: r.used || [], unverified: r.unverified || [] });
+      state.msgs.push({ role: 'ai', text: r.answer || '(tanpa jawaban)', used: r.used || [], unverified: r.unverified || [], model: r.model });
     } catch (e) {
       state.msgs.push({ role: 'ai', error: true, text: e.message });
     }
@@ -120,7 +133,20 @@
     head.append(el('span', 'eo-chat-note', 'Claude Code di komputer ini · menjawab hanya dari data dashboard · bacaan data, bukan rekomendasi investasi'));
     const fresh = el('button', 'adm-btn eo-chat-newbtn', 'Percakapan baru'); fresh.id = 'eo-chat-new'; fresh.type = 'button';
     fresh.addEventListener('click', () => { state = { msgs: [] }; save(); render(); input.focus(); });
-    head.append(fresh);
+    // model switch (a segmented control, remembered in this browser)
+    const sw = el('div', 'eo-chat-models'); sw.setAttribute('role', 'radiogroup'); sw.setAttribute('aria-label', 'Model Claude');
+    MODELS.forEach(([id, label, hint]) => {
+      const bt = el('button', 'eo-chat-model', label); bt.type = 'button'; bt.title = hint;
+      bt.setAttribute('role', 'radio'); bt.setAttribute('aria-checked', String(id === model));
+      bt.addEventListener('click', () => {
+        model = id;
+        try { localStorage.setItem(MKEY, id); } catch (e) { /* ignore */ }
+        sw.querySelectorAll('.eo-chat-model').forEach((x) => x.setAttribute('aria-checked', String(x === bt)));
+      });
+      sw.append(bt);
+    });
+    const right = el('div', 'eo-chat-tools'); right.append(sw, fresh);
+    head.append(right);
     box.replaceChildren(head, el('div', 'eo-chat-log'), form);
     $('.eo-chat-log', box).id = 'eo-chat-log';
     render();
