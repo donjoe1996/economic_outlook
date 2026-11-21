@@ -5,7 +5,7 @@ description: Write the dashboard's "Insight dari Claude" panel, a short data rea
 
 # Economic insights (token-lean)
 
-The dashboard's **✦ Buat insight / Perbarui insight** button does the same thing through the Claude API (backend/ai.py, same rules, same number check). Use this skill when the user asks in Claude Code.
+The dashboard's **✦ Buat insight / Perbarui insight** button does the same thing by running Claude Code headless (backend/ai.py, same rules, same number check). Use this skill when the user asks in Claude Code.
 
 Never read `data/store/*.json` or the dashboard code. All numbers come from one compact fact sheet.
 

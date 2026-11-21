@@ -1,6 +1,7 @@
 /*
  * "Insight dari Claude" panel. Shows data/insights/latest.json, written either
- * by the button here (POST /api/insights/generate, backend/ai.py) or by the
+ * by the button here (POST /api/insights/generate: Claude Code runs headless
+ * on this computer, backend/ai.py) or by the
  * project skill .claude/skills/economic-insights in Claude Code. Both check
  * every number against the fact sheet before publishing. Text is set with
  * textContent only.
@@ -13,9 +14,9 @@
   function button(label) {
     const b = el('button', 'adm-btn eo-ci-go', label);
     b.type = 'button';
-    b.title = 'Claude membaca ringkasan data dan menulis insight; setiap angka dicek sebelum tampil. Memakai kunci Claude di komputer ini.';
+    b.title = 'Claude Code di komputer ini membaca ringkasan data dan menulis insight; setiap angka dicek sebelum tampil. Memakai login Claude Code Anda, bukan kunci API.';
     b.addEventListener('click', async () => {
-      b.disabled = true; b.textContent = 'Claude sedang menulis…';
+      b.disabled = true; b.textContent = 'Claude Code sedang menulis… (±1 menit)';
       try {
         const out = await EOJobs.run('/api/insights/generate');
         await dash.reload();
