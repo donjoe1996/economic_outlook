@@ -129,7 +129,7 @@ def test_append_requires_open_range(tmp_path):
 
 def test_project_config_loads():
     cfg = load_config()
-    assert "pmi" in cfg.datasets and cfg.datasets["geo"].kind == "file"
+    assert "pmi" in cfg.datasets and cfg.datasets["provinces"].kind == "file" and cfg.datasets["world"].file.exists()
     assert cfg.datasets["valuasi"].key == (0, 4)
 
 
@@ -154,3 +154,36 @@ def test_period_labels_round_trip():
     assert periods.label("monthly", 2026, 5) == "Mei'26"
     assert periods.parse("monthly", "Okt'26 (sampai 29 Okt)") == (2026, 10)
     assert periods.parse("quarterly", "Q3'26") == (2026, 3)
+
+
+# ---------------------------------------------------------------- progress
+def test_refresh_reports_batches(setup):
+    svc, sheet = setup
+    from backend.jobs import Job
+    job = Job(id="1", kind="refresh", title="t")
+    svc.refresh(progress=job, batch=2)
+    assert (job.done, job.total) == (3, 3)
+    assert [s["text"].split(": ")[1] for s in job.steps] == ["PMI, Rotasi", "Read only"]
+
+
+def test_job_runner_success_error_and_single_flight():
+    import time
+    from backend.jobs import JobRunner
+
+    runner = JobRunner()
+
+    def slow(p):
+        p.step("langkah 1")
+        time.sleep(0.2)
+        return 42
+
+    a = runner.start("refresh", "A", slow)
+    b = runner.start("refresh", "B", slow)  # same kind while running -> same job
+    assert a is b
+    bad = runner.start("write", "C", lambda p: (_ for _ in ()).throw(UserError("salah isi")))
+    for _ in range(50):
+        if a.state != "running" and bad.state != "running":
+            break
+        time.sleep(0.05)
+    assert a.view()["result"] == 42 and a.view()["steps"][-1]["text"] == "Selesai"
+    assert bad.state == "error" and bad.error == "salah isi"

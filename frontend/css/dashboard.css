@@ -86,7 +86,7 @@ font-family: var(--font-anthropic-sans, sans-serif); color: var(--color-fg); }
 .eo-map-chip[aria-pressed="true"] { border-color: var(--color-fg); background: color-mix(in srgb, var(--color-fg) 8%, transparent); }
 .eo-map-chip:focus-visible, .eo-map-hit:focus-visible { outline: 2px solid var(--eo-c-pmi); outline-offset: 2px; }
 .eo-map-box { position: relative; width: 100%; border-radius: 8px; overflow: hidden; }
-.eo-map-sea { fill: var(--eo-sea); } .eo-map-land { fill: var(--eo-land); } .eo-map-grat { fill: none; stroke: var(--eo-grid); stroke-width: .5; }
+.eo-map-sea { fill: var(--eo-sea); } .eo-map-land { fill: var(--eo-land); } .eo-map-grat { fill: none; stroke: var(--eo-grid); stroke-width: .5; } .eo-map-border { fill: none; stroke: var(--eo-sea); stroke-width: .6; stroke-linejoin: round; }
 .eo-map-arc { fill: none; stroke-linecap: round; transition: opacity .2s; }
 .eo-map-arc.flowing { stroke-dasharray: 2 9; animation: eoDash 1.6s linear infinite; }
 .eo-map-arc.rev { animation-direction: reverse; }
@@ -131,3 +131,5 @@ font-family: var(--font-anthropic-sans, sans-serif); color: var(--color-fg); }
 @media (max-width: 900px) { .eo-map-top { grid-template-columns: 1fr; } .eo-map-right { position: static; } .eo-map-ins-wide ol { grid-template-columns: 1fr; } .eo-map-ins-wide li:nth-child(2) { border-top: 1px solid var(--color-border-line); padding-top: 10px; } }
 .eo-lg::before { content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; background: var(--k); }
 .eo-lg-wrap { margin: 0 2px; }
+/* Wide tables scroll inside their own box on narrow screens instead of widening the page. */
+.eo-tb { display: block; max-width: 100%; overflow-x: auto; }

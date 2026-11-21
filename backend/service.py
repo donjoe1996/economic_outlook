@@ -14,6 +14,7 @@ import re
 
 from .cache import Cache
 from .config import AppConfig, Dataset
+from .jobs import NO_PROGRESS, Progress
 from .sheets import SheetsAPI
 
 
@@ -59,6 +60,16 @@ def _norm_key(v: str) -> str:
     return " ".join(str(v).split()).casefold()
 
 
+class _StepsOnly(Progress):
+    """Pass steps through but not counts, for a sub-task inside a bigger job."""
+
+    def __init__(self, inner: Progress):
+        self.inner = inner
+
+    def step(self, text: str) -> None:
+        self.inner.step(text)
+
+
 class Service:
     def __init__(self, cfg: AppConfig, cache: Cache, sheets: SheetsAPI):
         self.cfg = cfg
@@ -98,22 +109,32 @@ class Service:
             out[ds.id] = item
         return out
 
-    def refresh(self, ids: list[str] | None = None) -> dict:
-        """Pull datasets from the Sheet into the cache, in one request."""
+    def refresh(self, ids: list[str] | None = None, progress: Progress = NO_PROGRESS, batch: int = 4) -> dict:
+        """Pull datasets from the Sheet into the cache.
+
+        Asked in small batches (not one big request) so progress can be shown
+        per batch. 27 datasets = 7 requests, well inside Google's limit of
+        60 read requests per minute.
+        """
         targets = [self.dataset(i) for i in ids] if ids else [d for d in self.cfg.datasets.values() if d.kind == "sheet"]
         targets = [d for d in targets if d.kind == "sheet"]
-        ranges: list[str] = []
-        for d in targets:
-            ranges.append(d.range.a1())
-            ranges.append(d.range.header_a1() or d.range.a1())
-        results = self.sheets.batch_get(self.cfg.spreadsheet_id, ranges)
         summary = {}
-        for i, d in enumerate(targets):
-            values = results[2 * i]
-            header_rows = results[2 * i + 1] if d.range.header_a1() else []
-            header = _pad(header_rows[0], d.range.width) if header_rows else []
-            self.cache.put(d.id, range_a1=d.range.a1(), header=header, values=values, source="sheet")
-            summary[d.id] = len(values)
+        progress.count(0, len(targets))
+        for start in range(0, len(targets), batch):
+            group = targets[start:start + batch]
+            progress.step("Membaca dari Google Sheet: " + ", ".join(d.title for d in group))
+            ranges: list[str] = []
+            for d in group:
+                ranges.append(d.range.a1())
+                ranges.append(d.range.header_a1() or d.range.a1())
+            results = self.sheets.batch_get(self.cfg.spreadsheet_id, ranges)
+            for i, d in enumerate(group):
+                values = results[2 * i]
+                header_rows = results[2 * i + 1] if d.range.header_a1() else []
+                header = _pad(header_rows[0], d.range.width) if header_rows else []
+                self.cache.put(d.id, range_a1=d.range.a1(), header=header, values=values, source="sheet")
+                summary[d.id] = len(values)
+            progress.count(start + len(group), len(targets))
         return summary
 
     def describe(self) -> list[dict]:
@@ -149,7 +170,7 @@ class Service:
         return out
 
     # --------------------------------------------------------------- write
-    def upsert(self, ds_id: str, new_row: list[str]) -> dict:
+    def upsert(self, ds_id: str, new_row: list[str], progress: Progress = NO_PROGRESS) -> dict:
         """Add a new period, or fill/correct an existing one, in the Sheet.
 
         Only cells you filled in are written, one by one, so formulas and
@@ -165,7 +186,9 @@ class Service:
             names = ", ".join(str(k + 1) for k in ds.key)
             raise UserError(f"Kolom kunci (kolom {names}) wajib diisi, misalnya periode.")
 
+        progress.step(f"Membaca tabel '{ds.title}' terbaru dari Sheet")
         live = [_pad(r, rng.width) for r in self.sheets.batch_get(self.cfg.spreadsheet_id, [rng.a1()])[0]]
+        progress.step("Memeriksa isian")
 
         # Check numbers against columns that hold only numbers today.
         for c in range(rng.width):
@@ -196,6 +219,7 @@ class Service:
             )
 
         if cells:
+            progress.step(f"Menulis {len(cells)} sel ke baris {sheet_row} ({new[ds.key[0]]})")
             self.sheets.write_cells(self.cfg.spreadsheet_id, cells)
-            self.refresh([ds.id])
+            self.refresh([ds.id], progress=_StepsOnly(progress))
         return {"action": action, "sheet_row": sheet_row, "cells_written": len(cells)}

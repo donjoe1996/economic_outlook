@@ -57,7 +57,7 @@ def _fmt(v: float) -> str:
     return f"{v:.4f}".rstrip("0").rstrip(".")
 
 
-def propose(ds: Dataset, existing: list[list[str]], fetch: Callable[[str], str], today: date | None = None) -> list[list[str]]:
+def propose(ds: Dataset, existing: list[list[str]], fetch: Callable[[str], str], today: date | None = None, progress=None) -> list[list[str]]:
     conf = ds.updater or {}
     freq = conf.get("frequency", "monthly")
     agg = conf.get("aggregate", "last")
@@ -74,6 +74,8 @@ def propose(ds: Dataset, existing: list[list[str]], fetch: Callable[[str], str],
     # 1. one value per period for each series
     per_col: dict[int, dict[tuple[int, int], float]] = {}
     for letter, series in (conf.get("columns") or {}).items():
+        if progress:
+            progress.step(f"{ds.title}: mengambil seri {series} dari FRED")
         groups: dict[tuple[int, int], list[tuple[date, float]]] = defaultdict(list)
         for d, v in _parse_csv(fetch(FRED_CSV.format(series=series))):
             groups[_period_of(freq, d)].append((d, v))

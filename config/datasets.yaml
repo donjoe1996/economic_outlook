@@ -227,7 +227,12 @@ datasets:
     write: none
 
   # ---------------- Local files --------------------------------------------
-  geo:
-    title: Bentuk peta (daratan dan negara)
-    description: Poligon daratan dunia dan 12 negara Asia-Pasifik/AS, dikodekan ringkas. Dipakai untuk Peta dan peta kredit.
-    file: data/files/geo.json
+  world:
+    title: Batas negara dunia (Natural Earth 1:50m)
+    description: Daratan dan batas negara, domain publik (naturalearthdata.com), lewat world-atlas. Dipakai Peta koneksi.
+    file: data/files/world-50m.topo.json
+
+  provinces:
+    title: Batas 34 provinsi Indonesia (geoBoundaries)
+    description: geoBoundaries IDN ADM1 (William & Mary geoLab, data OpenStreetMap, lisensi ODbL), disederhanakan. Dipakai Peta kredit.
+    file: data/files/idn-provinces.topo.json

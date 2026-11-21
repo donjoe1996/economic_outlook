@@ -10,6 +10,7 @@ Only two operations are needed:
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Protocol
 
@@ -56,22 +57,45 @@ class GoogleSheets:
         return None
 
     def status(self) -> dict:
-        return {
-            "has_credentials_file": self.credentials_path.exists(),
-            "signed_in": self._load_creds() is not None,
-        }
+        """Cheap check, no network: is there a saved sign-in we can renew?
 
-    def sign_in(self) -> None:
+        (Renewing the sign-in talks to Google, so it happens inside a job,
+        where it shows up as a progress step, not on every page load.)
+        """
+        signed_in = False
+        if self.token_path.exists():
+            try:
+                signed_in = bool(json.loads(self.token_path.read_text(encoding="utf-8")).get("refresh_token"))
+            except (OSError, ValueError):
+                signed_in = False
+        return {"has_credentials_file": self.credentials_path.exists(), "signed_in": signed_in}
+
+    def ensure_signed_in(self, progress=None) -> None:
+        """Renew the sign-in if needed (network). Raises if there is none."""
+        if progress:
+            progress.step("Memeriksa izin Google")
+        self._svc()
+
+    def sign_in(self, progress=None, timeout_seconds: int = 300) -> None:
         """Open the browser for Google sign-in and save the token."""
         from google_auth_oauthlib.flow import InstalledAppFlow
 
         if not self.credentials_path.exists():
             raise SheetsNotAuthorized(
-                f"OAuth client file not found at {self.credentials_path}. "
-                "See README, section 'Connect Google Sheets'."
+                f"File credentials.json belum ada di {self.credentials_path}. "
+                "Lihat README, bagian 'Connect Google Sheets'."
             )
+        if progress:
+            progress.step(f"Menunggu persetujuan Anda di tab browser yang terbuka (maks. {timeout_seconds // 60} menit)")
         flow = InstalledAppFlow.from_client_secrets_file(str(self.credentials_path), SCOPES)
-        creds = flow.run_local_server(port=0, open_browser=True)
+        try:
+            creds = flow.run_local_server(port=0, open_browser=True, timeout_seconds=timeout_seconds)
+        except Exception as exc:
+            raise SheetsNotAuthorized(f"Masuk Google tidak selesai ({type(exc).__name__}). Klik 'Hubungkan Google' lagi.") from exc
+        if creds is None:
+            raise SheetsNotAuthorized("Masuk Google tidak selesai (waktu habis). Klik 'Hubungkan Google' lagi.")
+        if progress:
+            progress.step("Menyimpan izin (secrets/token.json)")
         self.token_path.parent.mkdir(parents=True, exist_ok=True)
         self.token_path.write_text(creds.to_json(), encoding="utf-8")
         self._service = None
