@@ -17,8 +17,9 @@ Slow actions start a background job and answer at once with the job
     POST /api/sync                 sync with Drive only
     GET  /api/store                Drive folder, unsynced files, last sync
     POST /api/datasets/{id}/table  save a table edited in the app
-    POST /api/insights/generate    Claude writes the insight panel (button)
-    POST /api/stocks/{code}/research   Claude proposes a stock's figures (button)
+    POST /api/insights/generate    Claude Code writes the insight panel (button)
+    POST /api/stocks/{code}/research   Claude Code proposes a stock's figures (button)
+    POST /api/chat                 ask Claude Code about the data (chat box)
     POST /api/datasets/{id}/rows   add or update one row in the Sheet
     POST /api/updaters/preview     ask FRED etc. for new periods
     POST /api/updaters/apply       write the rows you confirmed
@@ -119,6 +120,11 @@ class TableBody(BaseModel):
 
 class SaveRowsBody(BaseModel):
     rows: dict[str, list[list[str]]]
+
+
+class ChatBody(BaseModel):
+    question: str
+    session_id: str | None = None
 
 
 class ApplyBody(BaseModel):
@@ -238,6 +244,17 @@ def insights_generate():
         return ai.generate_insights(progress=p)
 
     return jobs.start("ai", "Claude menulis insight", work).view()
+
+
+@app.post("/api/chat")
+def chat(body: ChatBody):
+    """One question to Claude Code about the dashboard's data (a job; the page
+    shows which files it reads, then the answer)."""
+    def work(p: Job):
+        service()   # makes sure data/store exists (first start converts the old copy)
+        return ai.chat(body.question, body.session_id, progress=p)
+
+    return jobs.start("chat", "Claude menjawab pertanyaan", work).view()
 
 
 @app.post("/api/stocks/{code}/research")

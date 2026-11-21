@@ -15,7 +15,7 @@ only for what they are good at: `GOOGLEFINANCE` price feeds.
  Google   ───►│    editor, updaters, Claude       • Claude buttons       │
  Sheets       │  • price feeds copied on pull                            │
  (prices)     │                                                          │
- FRED     ───►│  • Claude API: insights, stock research                  │
+ FRED     ───►│  • Claude Code (headless): insights, research, chat      │
               └──────────────────────────────────────────────────────────┘
 ```
 
@@ -50,7 +50,8 @@ Read it top-down:
 |---|---|
 | **Monitor** (top strip) | What moved? 13 key series, each with its latest value, change and a 12-month line. Click a tile to jump to its section |
 | **Sinyal keputusan** | What does it mean? The verdict each section already computes, side by side (world, US, Indonesia, BI, market, mining, readiness) |
-| **Insight dari Claude** | Why? The current written reading (see the Claude skill below) |
+| **Insight dari Claude** | Why? The current written reading, refreshed with the ✦ button (see *Claude in the app*) |
+| **Tanya Claude** | Your own question, answered from the same data (chat) |
 | **Function rail** (left) | Where is it? Function codes such as MAP, WRLD, BI, CRED and MKT; the active one is highlighted |
 
 - **Colour means one thing only.** Green or red means *good or bad for
@@ -381,7 +382,7 @@ stocks:
 | Arus asing | flow figure or event | Mulai, Selesai, Jenis, Net (Rp miliar), Basis, Kualitas, Sumber, Catatan |
 
 **Let Claude fill it, from the page or from Claude Code.** The button runs
-`backend/ai.py` through the Claude API (see *Claude buttons* below). In
+Claude Code headless (see *Claude in the app* below). In
 Claude Code, ask `isi data saham BBRI`; the project skill
 `.claude/skills/stock-data` follows the same source rules in three steps:
 
@@ -410,27 +411,35 @@ Notes on this port from the prototype:
   `Fundamental` tab), so its DDM value is higher than the prototype's.
 - A market event sourced only from Wikipedia was left out of the flow tab.
 
-## Claude buttons (insights and stock research)
+## Claude in the app: buttons and chat (through Claude Code)
 
-Two buttons call Claude directly from the app (`backend/ai.py`, through the
-Claude API):
+The app uses **Claude Code on your computer** (the `claude` command, in
+headless mode: `claude -p`), signed in with your own Claude Code login. There
+is no API key, and nothing is billed beyond your Claude Code plan.
+`backend/ai.py` starts it, reads its progress, and checks what comes back.
 
-| Button | Where | What it does |
+| Where | What it does | What Claude Code may use |
 |---|---|---|
-| **✦ Buat insight / Perbarui insight** | Insight dari Claude panel | Builds the fact sheet, has Claude write the insights as JSON, checks every number, publishes. If a number is not in the facts, Claude gets one chance to fix it; otherwise nothing is published |
-| **✦ Isi dengan Claude** | a stock's Valuasi or Dividen tab | Claude researches with web search (filings on idx.co.id and investor-relations sites, then OJK and BEI, then established press; never Wikipedia or aggregators), then turns its notes into rows. You review them before anything is saved |
+| **✦ Buat / Perbarui insight** (Insight panel) | Python builds the fact sheet; Claude writes the insights as JSON that must match a schema; Python checks every number. If a number is not in the facts, Claude gets one fix round; otherwise nothing is published | nothing: the facts are in the prompt |
+| **✦ Isi dengan Claude** (a stock's Valuasi or Dividen tab) | Claude researches the missing figures (the issuer's reports first, then OJK and BEI, then established financial press; never blogs, forums, aggregators or Wikipedia), labels derived figures with their formula, and returns rows with sources. You untick what you don't trust; nothing is saved before **Simpan** | WebSearch and WebFetch only |
+| **Tanya Claude** (chat under the Insight panel) | Ask anything about the data. Claude reads the dataset files it needs, names the dataset and period of every number, and remembers the conversation until **Percakapan baru** (new conversation) | reading the files in `data/store/` only |
 
-They need a Claude credential on the computer running the app. Do one of
-these, then restart the app:
+**Setup:** install Claude Code, run `claude` once in a terminal and sign in,
+then start the app from a terminal (`./start.sh`), so it can find `claude`.
+If `claude` is somewhere unusual, set `CLAUDE_BIN=/path/to/claude`. Without
+it, the buttons say what is missing instead of failing.
 
-- run `ant auth login` (Anthropic's CLI), or
-- start the app with `ANTHROPIC_API_KEY=... ./start.sh`.
+**Safety.** Claude Code runs with permission mode `dontAsk`: any tool not
+listed above is refused, so it cannot run commands or edit files.
 
-Without one, the button says so instead of failing. Each run is billed to
-that account: an insight run reads the ~2k-token fact sheet; a stock
-research run does up to 15 web searches and 15 page fetches. If a safety
-check declines a request, the API retries it on a fallback model inside the
-same call (`fallbacks: "default"`).
+- **The buttons** run in an empty temporary folder with file reading denied.
+  Text on a web page therefore can't steer the research into reading your
+  files (for example `secrets/token.json`).
+- **The chat** runs inside `data/store/` and has no web access, so what it
+  reads can't leave your computer.
+
+**Timing:** an insight run takes about 30–60 s, a stock research run 1–3
+minutes, and a chat answer usually 10–30 s.
 
 ## Insights written by Claude (project skill)
 
