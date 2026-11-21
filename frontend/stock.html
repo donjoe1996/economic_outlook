@@ -13,7 +13,8 @@
   // Which stock (stock.html?tk=BMRI) and which data this page needs: its own
   // datasets (group "stock") plus the macro series for the context strip.
   window.EO_TK = (new URLSearchParams(location.search).get('tk') || 'BMRI').toUpperCase();
-  window.EO_DATA_QUERY = 'group=stock&ids=birate,fed,rupiah,flow,saham,sbn,inflation';
+  // stock=CODE adds that stock's (and its peers') price tabs from the Saham sheet.
+  window.EO_DATA_QUERY = 'group=stock&stock=' + encodeURIComponent(window.EO_TK) + '&ids=birate,fed,rupiah,flow,saham,sbn,inflation';
 </script>
 </head>
 <body>
@@ -49,6 +50,28 @@
     <div class="lab-last" id="lastChip"></div>
   </div>
   <p class="lab-lede" id="labLede">Pertama, lihat bagaimana saham ini benar-benar bergerak. Lalu nilai harganya terhadap laba, nilai buku dan dividennya, periksa apakah asing masih menjual, dan uji apakah dividennya akan bertahan.</p>
+
+  <!-- Shown for a code that is not on the list yet (js/stock/engine.js: showAdd) -->
+  <section class="sec hidden" id="addStock" aria-labelledby="addTitle">
+    <h2 id="addTitle">Tambahkan saham</h2>
+    <p class="cap" id="addLede"></p>
+    <div id="addForm">
+      <div class="assump">
+        <div class="f"><label for="addName">Nama perusahaan</label><input type="text" id="addName" placeholder="mis. Bank Rakyat Indonesia" autocomplete="off"><small>Boleh dikosongkan; bisa diubah nanti di tab Daftar.</small></div>
+        <div class="f"><label for="addSector">Sektor</label><select id="addSector"><option value="umum">Lainnya (umum)</option><option value="bank">Bank</option></select><small>Bank dinilai dengan NIM, NPL dan CAR; lainnya dengan margin, utang dan pendapatan.</small></div>
+        <div class="f"><label for="addPeers">Pembanding, sampai 5 kode</label><input type="text" id="addPeers" placeholder="mis. BBCA, BMRI, BBNI" autocomplete="off"><small>Saham sejenis untuk dibandingkan di tab Valuasi. BMRI bisa dipakai; datanya diambil dari sheet BMRI.</small></div>
+      </div>
+      <div class="row"><button class="btn primary" id="addGo" type="button">Tambahkan</button><span class="small muted" id="addMsg"></span></div>
+      <details class="more" style="margin-top:14px"><summary>Apa yang terjadi saat menambahkan?</summary>
+        <ol class="readsteps">
+          <li>Saham ini ditulis di tab <b>Daftar</b> sheet IEO Saham (sheet itu dibuat dulu bila belum ada).</li>
+          <li>Tab <b>Harga KODE</b> dibuat untuk saham ini dan tiap pembanding, berisi rumus GOOGLEFINANCE harian sejak 2016.</li>
+          <li>Baris kosong berlabel ditambahkan di tab <b>Fundamental</b> (laba, ekuitas, saham beredar, dividen, rasio sektor). Isi sendiri, atau minta Claude: <code>isi data saham KODE</code>.</li>
+          <li>Riwayat akhir tahun, dividen dan arus asing per saham diisi di tab <b>Riwayat fundamental</b>, <b>Dividen</b> dan <b>Arus asing</b> (baris seluruh pasar, Kode PASAR, disalin sekali dari BMRI).</li>
+        </ol>
+      </details>
+    </div>
+  </section>
 
   <div class="tabs" role="tablist">
     <button class="tab" role="tab" id="tab-char" aria-selected="true" data-tab="char">1. Profil</button>
@@ -165,7 +188,7 @@
       <div class="explain" id="exPeers"></div>
 
       <div class="row" style="justify-content:space-between;margin-top:26px">
-        <h3 class="lab-h4" style="margin:0">Pergerakan harga keempat saham</h3>
+        <h3 class="lab-h4" style="margin:0" id="pMoveTitle">Pergerakan harga saham dan pembandingnya</h3>
         <div class="row"><label for="pWin">Sejak</label>
           <select id="pWin"><option value="ytd" selected>31 Des 2025</option><option value="1">1 tahun lalu</option><option value="2">2 tahun lalu</option><option value="5">5 tahun lalu</option></select></div>
       </div>
@@ -366,6 +389,7 @@
 <script src="js/jobs-ui.js"></script>
 <script src="js/data/loaders.js"></script>
 <script src="js/stock/BMRI.js"></script>
+<script src="js/stock/generic.js"></script>
 <script src="js/stock/engine.js"></script>
 <script src="js/terminal.js"></script>
 </body>

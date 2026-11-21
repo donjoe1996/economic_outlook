@@ -19,6 +19,9 @@ CACHE_DIR = ROOT / "data" / "cache"
 SECRETS_DIR = ROOT / "secrets"
 CREDENTIALS_PATH = SECRETS_DIR / "credentials.json"
 TOKEN_PATH = SECRETS_DIR / "token.json"
+# Spreadsheets the app created itself (e.g. the shared Saham sheet): alias -> id.
+# Kept out of git, like the cache; an id set in the YAML wins.
+LOCAL_SPREADSHEETS_PATH = ROOT / "data" / "spreadsheets.local.json"
 FRONTEND_DIR = ROOT / "frontend"
 
 WRITE_MODES = ("append", "fill", "none")
@@ -107,7 +110,8 @@ class Dataset:
     key: tuple[int, ...] = (0,)       # column offset(s) in the range that identify a row, e.g. the period
     updater: dict[str, Any] | None = None
     spreadsheet: str = ""             # Google spreadsheet id this dataset lives in
-    group: str = "macro"              # which page loads it: macro (dashboard) or stock
+    group: str = "macro"              # which page loads it: macro (dashboard), stock, harga (one stock's prices)
+    alias: str = ""                   # the spreadsheet alias it was declared with, if any
     # ---- publishing schedule, for the metadata page (backend/freshness.py)
     frequency: str = "snapshot"       # monthly | quarterly | irregular | snapshot | static
     lag_days: int = 0                 # days after a period ends until it is usually published
@@ -132,6 +136,14 @@ class AppConfig:
     spreadsheet_id: str                                   # the default (main) spreadsheet
     datasets: dict[str, Dataset] = field(default_factory=dict)
     spreadsheets: dict[str, str] = field(default_factory=dict)  # alias -> id
+    stocks_legacy: dict[str, dict] = field(default_factory=dict)  # stocks with their own sheets (BMRI)
+
+    def set_spreadsheet(self, alias: str, sid: str) -> None:
+        """Point an alias at a spreadsheet, e.g. right after the app created it."""
+        self.spreadsheets[alias] = sid
+        for ds in self.datasets.values():
+            if ds.alias == alias:
+                ds.spreadsheet = sid
 
     @property
     def sheet_url(self) -> str:
@@ -148,9 +160,16 @@ def _parse_key(value: Any) -> tuple[int, ...]:
     return (int(value),)
 
 
-def load_config(path: Path = CONFIG_PATH) -> AppConfig:
+def load_config(path: Path = CONFIG_PATH, local_path: Path = LOCAL_SPREADSHEETS_PATH) -> AppConfig:
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    cfg = AppConfig(spreadsheet_id=str(raw["spreadsheet_id"]), spreadsheets={k: str(v) for k, v in (raw.get("spreadsheets") or {}).items()})
+    sheets = {k: str(v or "") for k, v in (raw.get("spreadsheets") or {}).items()}
+    if local_path.exists():
+        import json
+        for k, v in json.loads(local_path.read_text(encoding="utf-8") or "{}").items():
+            if not sheets.get(k):
+                sheets[k] = str(v)
+    cfg = AppConfig(spreadsheet_id=str(raw["spreadsheet_id"]), spreadsheets=sheets,
+                    stocks_legacy={str(k).upper(): dict(v or {}) for k, v in (raw.get("stocks_legacy") or {}).items()})
     for ds_id, d in (raw.get("datasets") or {}).items():
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", ds_id):
             raise ValueError(f"Dataset id '{ds_id}' may only use letters, digits, _ and -")
@@ -180,6 +199,7 @@ def load_config(path: Path = CONFIG_PATH) -> AppConfig:
             updater=d.get("updater"),
             # "spreadsheet:" may be an alias from the spreadsheets: list or a raw id
             spreadsheet=cfg.spreadsheets.get(str(d.get("spreadsheet", "")), str(d.get("spreadsheet") or cfg.spreadsheet_id)),
+            alias=str(d.get("spreadsheet", "")) if str(d.get("spreadsheet", "")) in cfg.spreadsheets else "",
             group=str(d.get("group", "macro")),
             frequency=freq,
             lag_days=int(d.get("lag_days", 0)),

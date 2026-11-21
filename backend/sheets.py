@@ -30,6 +30,13 @@ class SheetsAPI(Protocol):
 
     def write_cells(self, spreadsheet_id: str, cells: dict[str, str]) -> None: ...
 
+    # Used only when adding a stock (backend/stocks.py).
+    def tab_ids(self, spreadsheet_id: str) -> dict[str, int]: ...
+
+    def create_spreadsheet(self, title: str, tabs: list[str]) -> str: ...
+
+    def add_tabs(self, spreadsheet_id: str, titles: list[str]) -> None: ...
+
 
 class GoogleSheets:
     def __init__(self, credentials_path: Path = CREDENTIALS_PATH, token_path: Path = TOKEN_PATH):
@@ -137,3 +144,20 @@ class GoogleSheets:
             "data": [{"range": a1, "values": [[v]]} for a1, v in cells.items()],
         }
         self._svc().spreadsheets().values().batchUpdate(spreadsheetId=spreadsheet_id, body=body).execute()
+
+    # ---- structure (adding a stock) --------------------------------------
+    def create_spreadsheet(self, title: str, tabs: list[str]) -> str:
+        """A new spreadsheet in the signed-in user's Drive. en_US so formulas use
+        commas and numbers come back as "2312.5", like the other sheets."""
+        body = {
+            "properties": {"title": title, "locale": "en_US", "timeZone": "Asia/Jakarta"},
+            "sheets": [{"properties": {"title": t}} for t in tabs],
+        }
+        resp = self._svc().spreadsheets().create(body=body, fields="spreadsheetId").execute()
+        return resp["spreadsheetId"]
+
+    def add_tabs(self, spreadsheet_id: str, titles: list[str]) -> None:
+        if not titles:
+            return
+        reqs = [{"addSheet": {"properties": {"title": t}}} for t in titles]
+        self._svc().spreadsheets().batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": reqs}).execute()

@@ -101,7 +101,7 @@ class Service:
             if (group or ids) and not (ds.group == group or (ids and ds.id in ids)):
                 continue
             item = {"title": ds.title, "description": ds.description, "kind": ds.kind, "write": ds.write,
-                    "sheet_url": self.cfg.url_of(ds.spreadsheet) if ds.kind == "sheet" else None}
+                    "sheet_url": self.cfg.url_of(ds.spreadsheet) if ds.kind == "sheet" and ds.spreadsheet else None}
             if ds.kind == "file":
                 try:
                     item.update(status="ok", answer=json.loads(ds.file.read_text(encoding="utf-8")))
@@ -110,7 +110,8 @@ class Service:
             else:
                 doc = self.cache.get(ds.id)
                 if doc is None:
-                    item.update(status="missing", message="Belum pernah ditarik dari Sheet")
+                    item.update(status="missing", message="Belum pernah ditarik dari Sheet" if (ds.spreadsheet or not ds.alias)
+                                else "Spreadsheet-nya belum dibuat (tambahkan saham pertama untuk membuatnya)")
                 else:
                     item.update(
                         status="ok",
@@ -140,6 +141,9 @@ class Service:
         """
         targets = [self.dataset(i) for i in ids] if ids else [d for d in self.cfg.datasets.values() if d.kind == "sheet"]
         targets = [d for d in targets if d.kind == "sheet"]
+        # A spreadsheet alias with no id yet (the Saham sheet before the first
+        # stock is added) is not an error: there is simply nothing to pull.
+        targets = [d for d in targets if d.spreadsheet or not d.alias]
         rows: dict[str, int] = {}
         failed: dict[str, str] = {}
         progress.count(0, len(targets))
@@ -319,52 +323,72 @@ class Service:
         Only cells you filled in are written, one by one, so formulas and
         notes in the other cells of that row stay untouched.
         """
+        out = self.upsert_many(ds_id, [new_row], progress=progress)
+        r = out["results"][0]
+        return {"action": r["action"], "sheet_row": r["sheet_row"], "cells_written": out["cells_written"]}
+
+    def upsert_many(self, ds_id: str, new_rows: list[list[str]], progress: Progress = NO_PROGRESS) -> dict:
+        """upsert for many rows at once: one read, one write, one refresh.
+
+        Used when a whole block arrives together (e.g. a stock's fundamentals),
+        so 30 rows cost 3 Google requests instead of 90.
+        """
         ds = self.dataset(ds_id)
+        if ds.kind == "sheet" and ds.alias and not ds.spreadsheet:
+            raise UserError(f"'{ds.title}': spreadsheet '{ds.alias}' belum dibuat. Tambahkan saham pertama dulu.")
         if not ds.writable:
             raise UserError(f"'{ds.title}' hanya-baca (write: {ds.write}). Ubah langsung di Google Sheet.")
         rng = ds.range
-        new = _pad(new_row, rng.width)
-        new = [v.strip() for v in new]
-        if any(not new[k] for k in ds.key):
-            names = ", ".join(str(k + 1) for k in ds.key)
-            raise UserError(f"Kolom kunci (kolom {names}) wajib diisi, misalnya periode.")
-
         progress.step(f"Membaca tabel '{ds.title}' terbaru dari Sheet")
         live = [_pad(r, rng.width) for r in self.sheets.batch_get(ds.spreadsheet, [rng.a1()])[0]]
         progress.step("Memeriksa isian")
-
-        # Check numbers against columns that hold only numbers today.
+        # which columns hold only numbers today (checked before any new row is added)
+        numeric = []
         for c in range(rng.width):
             seen = [r[c] for r in live if r[c].strip()]
-            if new[c] and len(seen) >= 2 and all(_is_number(v) for v in seen) and parse_number(new[c]) is None:
-                raise UserError(f"Kolom {c + 1} berisi angka, tetapi '{new[c]}' bukan angka.")
-
-        key = tuple(_norm_key(new[k]) for k in ds.key)
-        match = next((i for i, r in enumerate(live) if tuple(_norm_key(r[k]) for k in ds.key) == key), None)
-
-        if match is not None:
-            sheet_row = rng.first_row + match
-            cells = {
-                rng.cell_a1(sheet_row, c): new[c]
-                for c in range(rng.width)
-                if c not in ds.key and new[c] and not _same(new[c], live[match][c])
-            }
-            action = "update" if cells else "unchanged"
-        elif ds.write == "append":
-            sheet_row = rng.first_row + len(live)
-            cells = {rng.cell_a1(sheet_row, c): new[c] for c in range(rng.width) if new[c]}
-            action = "append"
-        else:
-            keys = ", ".join(live[i][ds.key[0]] for i in range(len(live)) if live[i][ds.key[0]]) or "-"
-            raise UserError(
-                f"'{new[ds.key[0]]}' belum ada di tabel ini. Mode 'fill' hanya mengisi baris yang sudah ada ({keys}). "
-                "Tambahkan barisnya di Sheet lalu perlebar range di config/datasets.yaml."
-            )
+            numeric.append(len(seen) >= 2 and all(_is_number(v) for v in seen))
+        cells: dict[str, str] = {}
+        results = []
+        for new_row in new_rows:
+            new = [v.strip() for v in _pad(new_row, rng.width)]
+            if any(not new[k] for k in ds.key):
+                names = ", ".join(str(k + 1) for k in ds.key)
+                raise UserError(f"Kolom kunci (kolom {names}) wajib diisi, misalnya periode.")
+            for c in range(rng.width):
+                if new[c] and numeric[c] and parse_number(new[c]) is None:
+                    raise UserError(f"Kolom {c + 1} berisi angka, tetapi '{new[c]}' bukan angka.")
+            key = tuple(_norm_key(new[k]) for k in ds.key)
+            match = next((i for i, r in enumerate(live) if tuple(_norm_key(r[k]) for k in ds.key) == key), None)
+            if match is not None:
+                sheet_row = rng.first_row + match
+                row_cells = {
+                    rng.cell_a1(sheet_row, c): new[c]
+                    for c in range(rng.width)
+                    if c not in ds.key and new[c] and not _same(new[c], live[match][c])
+                }
+                for c in range(rng.width):   # later rows in this batch see the change
+                    if c not in ds.key and new[c]:
+                        live[match][c] = new[c]
+                action = "update" if row_cells else "unchanged"
+            elif ds.write == "append":
+                sheet_row = rng.first_row + len(live)
+                row_cells = {rng.cell_a1(sheet_row, c): new[c] for c in range(rng.width) if new[c]}
+                live.append(new)
+                action = "append"
+            else:
+                keys = ", ".join(live[i][ds.key[0]] for i in range(len(live)) if live[i][ds.key[0]]) or "-"
+                raise UserError(
+                    f"'{new[ds.key[0]]}' belum ada di tabel ini. Mode 'fill' hanya mengisi baris yang sudah ada ({keys}). "
+                    "Tambahkan barisnya di Sheet lalu perlebar range di config/datasets.yaml."
+                )
+            cells.update(row_cells)
+            results.append({"key": [new[k] for k in ds.key], "action": action, "sheet_row": sheet_row, "cells": len(row_cells)})
 
         if cells:
-            progress.step(f"Menulis {len(cells)} sel ke baris {sheet_row} ({new[ds.key[0]]})")
+            rows_txt = ", ".join(str(r["key"][0]) for r in results if r["cells"])[:120]
+            progress.step(f"Menulis {len(cells)} sel ({rows_txt})")
             self.sheets.write_cells(ds.spreadsheet, cells)
             pulled = self.refresh([ds.id], progress=_StepsOnly(progress))
             if pulled["failed"]:
                 progress.warn("Tersimpan di Sheet, tetapi salinan lokal belum diperbarui. Klik 'Tarik dari Sheet' nanti.")
-        return {"action": action, "sheet_row": sheet_row, "cells_written": len(cells)}
+        return {"results": results, "cells_written": len(cells)}

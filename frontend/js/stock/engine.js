@@ -19,29 +19,34 @@ var $ = function (s) { return document.querySelector(s); };
 var TD = 245; /* hari bursa per tahun, kira-kira */
 var DAY = 86400000, YR = 365.25 * DAY;
 var MONTHS = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
-var TK = (window.EO_STOCKS || {})[window.EO_TK] || (window.EO_STOCKS || {}).BMRI;
+/* A stock with its own file (js/stock/BMRI.js) is known now; any other stock is
+   built from its Daftar row (js/stock/generic.js) once the data arrives. */
+var TK = (window.EO_STOCKS || {})[String(window.EO_TK || "BMRI").toUpperCase()] || null;
 var S = { dates: [], prices: [], hasDates: true, sample: false };
 var A = null, curTab = "char";
 
 /* ---------- formatting (Indonesian) ---------- */
 function cm(t) { return String(t).replace(".", ","); }
-function nd(v, d) { return cm((+v).toFixed(d)); }
-function pct(x, d) { if (d === undefined) d = 1; return cm((x * 100).toFixed(d)) + "%"; }
-function spct(x, d) { if (d === undefined) d = 1; var v = Math.abs(x * 100).toFixed(d); return (x >= 0 || +v === 0 ? "+" : "−") + cm(v) + "%"; }
+/* Blank Sheet cells arrive as NaN: show "n/a", never "NaN". */
+var NA = "n/a";
+function nd(v, d) { return isFinite(v) ? cm((+v).toFixed(d)) : NA; }
+function pct(x, d) { if (!isFinite(x)) return NA; if (d === undefined) d = 1; return cm((x * 100).toFixed(d)) + "%"; }
+function spct(x, d) { if (!isFinite(x)) return NA; if (d === undefined) d = 1; var v = Math.abs(x * 100).toFixed(d); return (x >= 0 || +v === 0 ? "+" : "−") + cm(v) + "%"; }
 function dec(x) { var d = x >= 100 ? 0 : x >= 10 ? 1 : 2, t = x.toFixed(d); if (t.indexOf(".") >= 0) t = t.replace(/0+$/, "").replace(/\.$/, ""); return cm(t); }
 function idc(v) {
+  if (!isFinite(v)) return NA;
   var a = Math.abs(v), s = v < 0 ? "−" : "";
   if (a >= 1e12) return s + "Rp " + dec(a / 1e12) + " T";
   if (a >= 1e9) return s + "Rp " + dec(a / 1e9) + " M";
   if (a >= 1e6) return s + "Rp " + dec(a / 1e6) + " jt";
   return s + "Rp " + Math.round(a).toLocaleString("id-ID");
 }
-function px(v) { return "Rp " + Math.round(v).toLocaleString("id-ID"); }
+function px(v) { return !isFinite(v) ? NA : "Rp " + Math.round(v).toLocaleString("id-ID"); }
 function pxShort(v) { return Math.round(v).toLocaleString("id-ID"); }
 function fmtDay(t) { var d = new Date(t); return d.getUTCDate() + " " + MONTHS[d.getUTCMonth()] + " " + d.getUTCFullYear(); }
 function monthsOf(days) { var m = days / (TD / 12); return m >= 24 ? nd(days / TD, 1) + " tahun" : Math.round(m) + " bulan"; }
-function x2(v) { return nd(v, 2) + "×"; }
-function x1(v) { return nd(v, 1) + "×"; }
+function x2(v) { return isFinite(v) ? nd(v, 2) + "×" : NA; }
+function x1(v) { return isFinite(v) ? nd(v, 1) + "×" : NA; }
 
 /* ---------- parsing ---------- */
 function numOf(s) {
@@ -306,17 +311,42 @@ function realOf(x, inf) { return (1 + x) / (1 + inf) - 1; }
 $("#vInf").addEventListener("input", function () { inflEdited = true; if (!$("#p-val").classList.contains("hidden")) renderVal(); });
 
 /* ---------- fundamentals and valuation ---------- */
-var F = { map: {}, note: "" };
+var F = { map: {}, notes: {}, note: "" };
 var vEdited = {};
 function fv(k) { var v = F.map[k]; return (v === undefined || !isFinite(v)) ? NaN : v; }
+/* Last full financial year, and the per-year keys that refer to it (dps_fy2025...). */
+function FY() { var y = fv("fy_last"); return isFinite(y) ? y : 2025; }
+function fyv(kind, back) { return fv(kind + "_fy" + (FY() - (back || 0))); }
+/* Latest profit growth and the period it covers (Catatan column, e.g. "H1 2026"). */
+function PG() { var v = fv("profit_growth_h1"); return isFinite(v) ? v : fv("profit_growth"); }
+function pgLabel() {
+  var t = String(F.notes.profit_growth || "").split(/[;,(]/)[0].trim();
+  return t && t.length <= 24 ? t : (TK && TK.shared ? "periode terakhir" : "H1 2026");
+}
+function pgPrev() { var m = /^(.*?)(\d{4})$/.exec(pgLabel()); return m ? m[1] + (+m[2] - 1) : "periode yang sama tahun lalu"; }
+function isBank() { return !TK || (TK.sector || "bank") === "bank"; }
+function NOUN() { return isBank() ? "bank" : "perusahaan"; }
+function allOf(n) { return ["", "satu-satunya", "keduanya", "ketiganya", "keempatnya", "kelimanya", "keenamnya"][n] || "semuanya"; }
+/* Show a "fill these rows first" note instead of a tab's empty charts. */
+function gate(tab, ok, html) {
+  var p = $("#p-" + tab), g = p.querySelector(":scope > .gate");
+  if (!g) { g = document.createElement("div"); g.className = "banner gate"; p.insertBefore(g, p.firstChild); }
+  g.classList.toggle("hidden", !!ok); if (!ok) g.innerHTML = html;
+  Array.prototype.forEach.call(p.children, function (c) { if (c !== g) c.classList.toggle("gated", !ok); });
+  return !!ok;
+}
+function fillHint(what) {
+  var url = (metaOf(TK.ds.fund) || {}).sheet_url;
+  return "<b>" + what + "</b> Isi barisnya untuk Kode " + TK.code + " di " + (url ? "<a href=\"" + url + "\" target=\"_blank\" rel=\"noopener\">sheet Saham</a>" : "sheet Saham") + " (atau lewat <b>+ Data</b> di dashboard), lalu klik <b>\u27f3 Tarik</b>. Bisa juga minta Claude: <code>isi data saham " + TK.code + "</code>; Claude mencari angka dari sumber resmi dan mencatat sumbernya.";
+}
 function applyDefaults() {
   function setv(id, v) { if (!vEdited[id] && isFinite(v)) $("#" + id).value = (+v.toFixed(2)); }
-  setv("vRoe", fv("roe")); setv("vPay", fv("payout_fy2025"));
+  setv("vRoe", fv("roe")); setv("vPay", fyv("payout"));
 }
 ["vCoe", "vG", "vEg", "vPay", "vRoe", "vRoeT"].forEach(function (id) { $("#" + id).addEventListener("input", function () { vEdited[id] = true; renderVal(); }); });
 function vPar() {
   function g(id, d) { var v = Number($("#" + id).value); return isFinite(v) && $("#" + id).value !== "" ? v / 100 : d; }
-  return { coe: g("vCoe", TK.val.coe / 100), g: g("vG", TK.val.g / 100), eg: g("vEg", TK.val.eg / 100), pay: g("vPay", fv("payout_fy2025") / 100), roe: g("vRoe", fv("roe") / 100), roeT: g("vRoeT", TK.val.roeT / 100) };
+  return { coe: g("vCoe", TK.val.coe / 100), g: g("vG", TK.val.g / 100), eg: g("vEg", TK.val.eg / 100), pay: g("vPay", fyv("payout") / 100), roe: g("vRoe", fv("roe") / 100), roeT: g("vRoeT", TK.val.roeT / 100) };
 }
 function vA(p, bv) { return p.coe > p.g + 1e-9 ? bv * (p.roe - p.g) / (p.coe - p.g) : NaN; }
 function vB(p, eps) { return p.coe > p.g + 1e-9 ? eps * (1 + p.eg) * p.pay / (p.coe - p.g) : NaN; }
@@ -334,9 +364,11 @@ function upTone(u) { return u > 0.15 ? "ok" : u < -0.15 ? "bad" : "warn"; }
 function fmtShares(x) { return nd(x / 1e9, 2) + " miliar"; }
 
 function renderVal() {
-  if (!S.prices.length || !isFinite(fv("shares_out"))) return;
+  if (!S.prices.length) return;
+  var missing = ["shares_out", "equity_parent", "net_profit_ttm"].filter(function (k) { return !isFinite(fv(k)); });
+  if (!gate("val", !missing.length, fillHint("Valuasi butuh fundamental: " + missing.join(", ") + " belum diisi."))) return;
   var n = S.prices.length, price = S.prices[n - 1];
-  var shares = fv("shares_out") * 1e9, bv = fv("equity_parent") * 1e12 / shares, eps = fv("net_profit_ttm") * 1e12 / shares, dpsT = fv("dps_ttm_paid");
+  var shares = fv("shares_out") * 1e9, bv = fv("equity_parent") * 1e12 / shares, eps = fv("net_profit_ttm") * 1e12 / shares, dpsT = isFinite(fv("dps_ttm_paid")) ? fv("dps_ttm_paid") : fyv("dps");
   var p = vPar(), eps1 = eps * (1 + p.eg), dps1 = eps1 * p.pay, inf = inflNow() / 100;
   $("#vRealLine").textContent = "Dalam uang hari ini, dengan inflasi " + pct(inf, 1) + " setahun: biaya ekuitas " + pct(p.coe, 1) + " kira-kira " + pct(realOf(p.coe, inf), 1) + " di atas kenaikan harga, pertumbuhan jangka panjang " + pct(p.g, 1) + " kira-kira " + pct(realOf(p.g, inf), 1) + " riil, dan pertumbuhan laba tahun depan " + pct(p.eg, 1) + " kira-kira " + pct(realOf(p.eg, inf), 1) + " riil." + (realOf(p.g, inf) > 0.04 ? " Pertumbuhan riil jangka panjang di atas 4% adalah standar tinggi bagi perusahaan mana pun." : "");
   var pbv = price / bv, per = price / eps, perF = price / eps1, yT = dpsT / price, yF = dps1 / price, ey = eps / price, mcap = price * shares;
@@ -357,23 +389,24 @@ function renderVal() {
   var lo52 = Infinity, hi52 = -Infinity, i0 = Math.max(0, n - TD), i;
   for (i = i0; i < n; i++) { lo52 = Math.min(lo52, S.prices[i]); hi52 = Math.max(hi52, S.prices[i]); }
   var i5 = Math.max(0, n - 5 * TD), below = 0, tot = 0; for (i = i5; i < n; i++) { tot++; if (S.prices[i] <= price) below++; }
-  note("#exPay", "<p><b>Dalam bahasa sederhana.</b> PBV menanyakan berapa yang Anda bayar untuk setiap rupiah aset bersih bank. PER menanyakan berapa tahun laba saat ini yang setara dengan harga. Bank dengan imbal hasil ekuitas tinggi layak dihargai lebih tinggi terhadap nilai buku, jadi nilai " + x2(pbv) + " terhadap ROE " + pct(p.roe, 1) + " di bawah, bukan sendirian. Dalam 52 minggu terakhir saham diperdagangkan antara " + px(lo52) + " dan " + px(hi52) + ", atau " + x2(lo52 / bv) + " sampai " + x2(hi52 / bv) + " nilai buku hari ini. Harga hari ini lebih tinggi dari " + Math.round(below / tot * 100) + "% penutupan dalam " + nd(Math.min(5, Math.round(tot / TD * 10) / 10), 1) + " tahun terakhir.</p>");
+  note("#exPay", "<p><b>Dalam bahasa sederhana.</b> PBV menanyakan berapa yang Anda bayar untuk setiap rupiah aset bersih " + NOUN() + ". PER menanyakan berapa tahun laba saat ini yang setara dengan harga. " + (isBank() ? "Bank" : "Perusahaan") + " dengan imbal hasil ekuitas tinggi layak dihargai lebih tinggi terhadap nilai buku, jadi nilai " + x2(pbv) + " terhadap ROE " + pct(p.roe, 1) + " di bawah, bukan sendirian. Dalam 52 minggu terakhir saham diperdagangkan antara " + px(lo52) + " dan " + px(hi52) + ", atau " + x2(lo52 / bv) + " sampai " + x2(hi52 / bv) + " nilai buku hari ini. Harga hari ini lebih tinggi dari " + Math.round(below / tot * 100) + "% penutupan dalam " + nd(Math.min(5, Math.round(tot / TD * 10) / 10), 1) + " tahun terakhir.</p>");
 
   renderMultHist(price, bv, eps);
   renderPeers(price, bv, eps);
 
-  var pg = fv("profit_growth_h1");
+  var pg = PG(), Y = FY();
   $("#vGet").innerHTML =
-    stat("Return on equity", pct(fv("roe") / 100, 1), "Laba disetahunkan ÷ ekuitas, H1 2026.", fv("roe") >= 15 ? "ok" : "warn") +
+    stat("Return on equity", pct(fv("roe") / 100, 1), "Laba disetahunkan ÷ ekuitas, " + pgLabel() + ".", fv("roe") >= 15 ? "ok" : "warn") +
     stat("Laba per saham, 12 bulan", px(eps), "Laba Rp " + nd(fv("net_profit_ttm"), 1) + " T dalam 12 bulan terakhir.") +
     stat("Nilai buku per saham", px(bv), "Ekuitas Rp " + nd(fv("equity_parent"), 1) + " T ÷ jumlah saham.") +
-    stat("Dividen per saham, FY2025", px(fv("dps_fy2025")), "Naik dari " + px(fv("dps_fy2024")) + " pada FY2024 dan " + px(fv("dps_fy2023")) + " pada FY2023.", "ok") +
-    stat("Rasio pembayaran, FY2025", pct(fv("payout_fy2025") / 100, 0), "FY2024 " + pct(fv("payout_fy2024") / 100, 1) + ". Sisanya ditahan untuk menumbuhkan nilai buku.") +
-    stat("Pertumbuhan laba, H1 2026", spct(pg / 100, 1), "Dibanding H1 2025.", pg < 3 ? "warn" : "");
+    stat("Dividen per saham, FY" + Y, isFinite(fyv("dps")) ? px(fyv("dps")) : "n/a", isFinite(fyv("dps", 1)) ? (fyv("dps") >= fyv("dps", 1) ? "Naik" : "Turun") + " dari " + px(fyv("dps", 1)) + " pada FY" + (Y - 1) + (isFinite(fyv("dps", 2)) ? " dan " + px(fyv("dps", 2)) + " pada FY" + (Y - 2) : "") + "." : "Tahun sebelumnya belum diisi.", fyv("dps") >= fyv("dps", 1) ? "ok" : "") +
+    stat("Rasio pembayaran, FY" + Y, isFinite(fyv("payout")) ? pct(fyv("payout") / 100, 0) : "n/a", (isFinite(fyv("payout", 1)) ? "FY" + (Y - 1) + " " + pct(fyv("payout", 1) / 100, 1) + ". " : "") + "Sisanya ditahan untuk menumbuhkan nilai buku.") +
+    stat("Pertumbuhan laba, " + pgLabel(), isFinite(pg) ? spct(pg / 100, 1) : "n/a", "Dibanding " + pgPrev() + ".", pg < 3 ? "warn" : "");
   var sg = (fv("roe") / 100) * (1 - p.pay);
-  note("#exGet", "<p><b>Dalam bahasa sederhana.</b> ROE adalah mesinnya: seberapa keras setiap rupiah uang pemegang saham bekerja. Dengan rasio pembayaran " + pct(p.pay, 0) + ", bank menahan " + pct(1 - p.pay, 0) + " laba, yang dengan ROE " + pct(fv("roe") / 100, 1) + " membuat nilai buku tumbuh sekitar " + pct(sg, 1) + " setahun tanpa menerbitkan saham baru." + TK.x.getNote(pg) + "</p>");
+  note("#exGet", "<p><b>Dalam bahasa sederhana.</b> ROE adalah mesinnya: seberapa keras setiap rupiah uang pemegang saham bekerja. Dengan rasio pembayaran " + pct(p.pay, 0) + ", " + NOUN() + " menahan " + pct(1 - p.pay, 0) + " laba, yang dengan ROE " + pct(fv("roe") / 100, 1) + " membuat nilai buku tumbuh sekitar " + pct(sg, 1) + " setahun tanpa menerbitkan saham baru." + TK.x.getNote(pg) + "</p>");
 
-  $("#vSafe").innerHTML =
+  if (isBank()) {
+    $("#vSafe").innerHTML =
     stat("Net interest margin", pct(fv("nim") / 100, 1), "Selisih yang disimpan bank dari penyaluran kreditnya, penggerak laba utama.") +
     stat("Kredit bermasalah (NPL)", pct(fv("npl") / 100, 1), "Kredit yang sudah bermasalah.", fv("npl") > 2.5 ? "warn" : "ok") +
     stat("Loan at risk", pct(fv("lar") / 100, 1), "Termasuk kredit yang direstrukturisasi setelah Covid.", fv("lar") > 6 ? "warn" : "") +
@@ -382,6 +415,15 @@ function renderVal() {
     stat("Kredit terhadap simpanan", pct(fv("ldr") / 100, 1), "Di bawah 100% berarti menyalurkan lebih sedikit dari yang dihimpun.") +
     stat("Biaya terhadap pendapatan", pct(fv("cir") / 100, 1), "Makin rendah makin efisien.", fv("cir") < 40 ? "ok" : "") +
     stat("Pertumbuhan kredit", spct(fv("loan_growth") / 100, 0), "Simpanan tumbuh " + spct(fv("deposit_growth") / 100, 1) + ".");
+  } else {
+    var nc = fv("net_cash");
+    $("#vSafe").innerHTML =
+      stat("Margin laba bersih", isFinite(fv("net_margin")) ? pct(fv("net_margin") / 100, 1) : "n/a", "Laba bersih sebagai bagian penjualan: berapa yang tersisa dari setiap rupiah.") +
+      stat("Utang terhadap ekuitas", isFinite(fv("der")) ? pct(fv("der") / 100, 0) : "n/a", "Utang berbunga dibanding modal pemilik. Makin rendah, makin tebal bantalannya.", fv("der") > 100 ? "warn" : fv("der") < 50 ? "ok" : "") +
+      stat("Kas bersih", isFinite(nc) ? (nc < 0 ? "\u2212" : "") + "Rp " + nd(Math.abs(nc), 1) + " T" : "n/a", nc >= 0 ? "Kas lebih besar dari utang berbunga." : "Utang berbunga lebih besar dari kas.", nc >= 0 ? "ok" : "") +
+      stat("Pertumbuhan pendapatan", isFinite(fv("revenue_growth")) ? spct(fv("revenue_growth") / 100, 1) : "n/a", "Periode " + pgLabel() + ". Laba tumbuh " + (isFinite(pg) ? spct(pg / 100, 1) : "n/a") + ".") +
+      stat("Arus kas operasi, 12 bulan", isFinite(fv("ocf_ttm")) ? "Rp " + nd(fv("ocf_ttm"), 1) + " T" : "n/a", isFinite(fv("ocf_ttm")) ? "Dibanding laba Rp " + nd(fv("net_profit_ttm"), 1) + " T: " + (fv("ocf_ttm") >= fv("net_profit_ttm") ? "laba menjadi kas." : "kas lebih kecil dari laba, periksa piutang dan persediaan.") : "Belum diisi.", fv("ocf_ttm") >= fv("net_profit_ttm") ? "ok" : "warn");
+  }
   note("#exSafe", "<p><b>Dalam bahasa sederhana.</b> " + TK.x.safeNote() + "</p>");
 
   function row(name, b1, b2, b3) { var u = isFinite(b2) ? b2 / price - 1 : NaN; return "<tr><td>" + name + "</td><td>" + vcol(b1) + "</td><td><b>" + vcol(b2) + "</b></td><td>" + vcol(b3) + "</td><td class=\"" + (isFinite(u) ? upTone(u) : "") + "\">" + (isFinite(u) ? spct(u, 0) : "n/a") + "</td></tr>"; }
@@ -513,7 +555,30 @@ var SECT = {
     note: "ROE adalah angka H1 2026 disetahunkan dari masing-masing bank, dan nilai buku BMRI dan BBNI diturunkan dari kelipatan yang dipublikasikan, jadi anggap selisih satu atau dua poin sebagai gangguan.",
   },
 };
-function SEC() { return SECT[TK.sector || "bank"]; }
+/* Stocks from the Saham sheet: peers come from their Daftar row, and the columns
+   compared depend on the sector (banks: margin, bad loans, capital; others:
+   margins, debt, revenue). */
+var genSec = null;
+function SEC() {
+  if (!TK.shared) return SECT[TK.sector || "bank"];
+  if (genSec && genSec.code === TK.code) return genSec;
+  var bank = isBank(), all = [TK.code].concat(TK.peers || []);
+  genSec = {
+    code: TK.code, all: all, noun: bank ? "bank pembanding" : "pembanding", nounOne: NOUN(),
+    pIntro: " dipilih sebagai pembanding di tab Daftar. Harga dari tab Harga masing-masing; nilai buku, laba dan rasio dari tab Fundamental, jadi periode laporannya bisa sedikit berbeda.",
+    aggLab: "Rata-rata pembanding",
+    cols: bank ? SECT.bank.cols.map(function (c) { return c.k === "pg" ? { k: "pg", lab: "Laba", f: "spct1" } : c; })
+      : [{ k: "roe", lab: "ROE", f: "pct1" }, { k: "nm", lab: "Margin bersih", f: "pct1" }, { k: "der", lab: "Utang/ekuitas", f: "pct0" }, { k: "pg", lab: "Laba", f: "spct1" }, { k: "rg", lab: "Pendapatan", f: "spct0" }],
+    row: bank ? SECT.bank.row : function (f) { return { roe: f.roe, nm: f.net_margin, der: f.der, pg: f.profit_growth_h1, rg: f.revenue_growth }; },
+    me: bank ? function () { return { roe: fv("roe"), nim: fv("nim"), npl: fv("npl"), car: fv("car"), pg: PG(), lg: fv("loan_growth") }; }
+      : function () { return { roe: fv("roe"), nm: fv("net_margin"), der: fv("der"), pg: PG(), rg: fv("revenue_growth") }; },
+    cush: bank ? { k: "car", lab: "Bantalan modal", hiGood: true, top: "bantalan paling tebal dari " + allOf(all.length), low: "bantalan paling tipis dari " + allOf(all.length), what: "memiliki rasio modal " }
+      : { k: "der", lab: "Utang terhadap ekuitas", hiGood: false, top: "utang paling besar dari " + allOf(all.length), low: "utang paling kecil dari " + allOf(all.length), what: "memiliki utang terhadap ekuitas " },
+    grow: bank ? { k: "lg", what: "kredit naik " } : { k: "rg", what: "pendapatan naik " },
+    note: "Angka dari tab Fundamental di sheet Saham; periode laporan bisa berbeda antaremiten, jadi anggap selisih satu atau dua poin sebagai gangguan.",
+  };
+  return genSec;
+}
 var PD = { f: {}, p: null };
 function peersOf() { return SEC().all.filter(function (k) { return k !== TK.code; }); }
 function pclose(tk, t) { var d = PD.p && PD.p[tk]; if (!d) return NaN; var i = lowerIdx(d.t, t); return i >= 0 ? d.c[i] : NaN; }
@@ -522,25 +587,29 @@ function ptsd(x, d) { if (!isFinite(x)) return "n/a"; return (x >= 0 ? "+" : "�
 function listAnd(a) { return a.join(", ").replace(/, ([^,]*)$/, " dan $1"); }
 function renderPeers(price, bv, eps) {
   var me = TK.code, PE = peersOf(), SC = SEC(), AL = SC.aggLab, al = AL.toLowerCase();
+  $("#vPeers").classList.toggle("hidden", !PE.length);
+  if (!PE.length) return;
   $("#pTitle").textContent = "Bagaimana " + me + " dibanding " + SC.noun + " lain?";
   $("#pIntro").textContent = listAnd(PE) + SC.pIntro;
-  var B0 = SC.me(); B0.k = me; B0.name = TK.name; B0.price = price; B0.bvps = bv; B0.eps = eps; B0.dps = fv("dps_fy2025");
+  var B0 = SC.me(); B0.k = me; B0.name = TK.name; B0.price = price; B0.bvps = bv; B0.eps = eps; B0.dps = fyv("dps");
   var rows = [B0];
   PE.forEach(function (tk) {
     var f = PD.f[tk] || {}, pr = (PD.p && PD.p[tk] && PD.p[tk].c.length) ? PD.p[tk].c[PD.p[tk].c.length - 1] : NaN;
-    var r = SC.row(f); r.k = tk; r.name = f.name || tk; r.price = pr; r.bvps = f.bvps; r.eps = f.eps_ttm; r.dps = f.dps_fy2025; rows.push(r);
+    var r = SC.row(f); r.k = tk; r.name = f.name || tk; r.price = pr; r.bvps = f.bvps; r.eps = f.eps_ttm; r.dps = f.dps_fy; rows.push(r);
   });
   rows.forEach(function (r) { r.pbv = r.price / r.bvps; r.per = r.price / r.eps; r.yld = r.dps / r.price * 100; });
   var peers = rows.slice(1), AV = {}, keys = ["pbv", "per", "yld"].concat(SC.cols.map(function (c) { return c.k; }));
   keys.forEach(function (k) { AV[k] = avgOf(peers.map(function (r) { return r[k]; })); });
   var B = rows[0], havePx = isFinite(AV.pbv) && isFinite(AV.per);
-  $("#pMsg").classList.toggle("hidden", havePx);
+  var noFund = PE.filter(function (k) { return !isFinite((PD.f[k] || {}).bvps); });
+  $("#pMsg").classList.toggle("hidden", havePx && !noFund.length);
   if (!havePx) $("#pMsg").textContent = "Harga atau fundamental pembanding belum terbaca, jadi kelipatan di bawah kosong. Tarik data dari Sheet.";
+  else if (noFund.length) $("#pMsg").textContent = "Fundamental " + listAnd(noFund) + " belum diisi di tab Fundamental, jadi rata-rata pembanding hanya memakai " + listAnd(PE.filter(function (k) { return noFund.indexOf(k) < 0; })) + ". Isi baris Kode " + listAnd(noFund) + " agar perbandingannya adil.";
   function f1(x, s) { return isFinite(x) ? nd(x, 1) + (s || "") : "n/a"; }
   function f2(x, s) { return isFinite(x) ? nd(x, 2) + (s || "") : "n/a"; }
   function fmt(c, v) { if (!isFinite(v)) return "n/a"; if (c.f === "pct1") return nd(v, 1) + "%"; if (c.f === "pct0") return nd(v, 0) + "%"; if (c.f === "spct1") return spct(v / 100, 1); return spct(v / 100, 0); }
   function tr(r, cls) { return "<tr class=\"" + (cls || "") + "\"><td>" + (r.name ? "<b>" + r.k + "</b><br><span class=\"muted small\">" + r.name + "</span>" : r.k) + "</td><td>" + (isFinite(r.price) ? px(r.price) : "n/a") + "</td><td>" + f2(r.pbv, "×") + "</td><td>" + f1(r.per, "×") + "</td><td>" + f1(r.yld, "%") + "</td>" + SC.cols.map(function (c) { return "<td>" + fmt(c, r[c.k]) + "</td>"; }).join("") + "</tr>"; }
-  var h = "<thead><tr><th>Bank</th><th>Harga</th><th>PBV</th><th>PER</th><th>Imbal dividen</th>" + SC.cols.map(function (c) { return "<th>" + c.lab + "</th>"; }).join("") + "</tr></thead><tbody>";
+  var h = "<thead><tr><th>" + (isBank() ? "Bank" : "Emiten") + "</th><th>Harga</th><th>PBV</th><th>PER</th><th>Imbal dividen</th>" + SC.cols.map(function (c) { return "<th>" + c.lab + "</th>"; }).join("") + "</tr></thead><tbody>";
   h += tr(B, "sel"); peers.forEach(function (r) { h += tr(r); });
   var avr = { k: AL, price: NaN, pbv: AV.pbv, per: AV.per, yld: AV.yld }; SC.cols.forEach(function (c) { avr[c.k] = AV[c.k]; }); h += tr(avr);
   h += "<tr><td><b>" + me + " vs " + al + "</b></td><td></td><td>" + (isFinite(AV.pbv) ? x1(B.pbv / AV.pbv) : "n/a") + "</td><td>" + (isFinite(AV.per) ? x1(B.per / AV.per) : "n/a") + "</td><td>" + ptsd(B.yld - AV.yld) + "</td>" + SC.cols.map(function (c) { return "<td>" + ptsd(B[c.k] - AV[c.k], c.f === "spct0" || c.f === "pct0" ? 0 : 1) + "</td>"; }).join("") + "</tr></tbody>";
@@ -550,16 +619,16 @@ function renderPeers(price, bv, eps) {
     stat(pw + " atas nilai buku", isFinite(prem) ? x1(prem) : "n/a", me + " " + f2(B.pbv, "×") + " dibanding " + al + " " + f2(AV.pbv, "×") + ".") +
     stat(pw + " atas laba", isFinite(premE) ? x1(premE) : "n/a", me + " " + f1(B.per, "×") + " dibanding " + f1(AV.per, "×") + ".") +
     stat("Return on equity", ptsd(B.roe - AV.roe), me + " " + f1(B.roe, "%") + " dibanding " + f1(AV.roe, "%") + " untuk pembanding.", B.roe > AV.roe ? "ok" : "warn") +
-    stat("Pertumbuhan laba, " + SC.period, ptsd(B.pg - AV.pg, 1), me + " " + spct(B.pg / 100, 1) + " dibanding " + spct(AV.pg / 100, 1) + " untuk pembanding.", B.pg < AV.pg - 5 ? "bad" : "") +
-    stat("Imbal hasil dividen", ptsd(B.yld - AV.yld), me + " " + f1(B.yld, "%") + " dibanding " + f1(AV.yld, "%") + ", dari dividen FY2025 masing-masing bank.") +
+    stat("Pertumbuhan laba, " + (SC.period || pgLabel()), ptsd(B.pg - AV.pg, 1), me + " " + spct(B.pg / 100, 1) + " dibanding " + spct(AV.pg / 100, 1) + " untuk pembanding.", B.pg < AV.pg - 5 ? "bad" : "") +
+    stat("Imbal hasil dividen", ptsd(B.yld - AV.yld), me + " " + f1(B.yld, "%") + " dibanding " + f1(AV.yld, "%") + ", dari dividen FY" + FY() + " masing-masing.") +
     stat(CU.lab, ptsd(cv - ca, 1), me + " " + f1(cv, "%") + " dibanding " + f1(ca, "%") + ".", (CU.hiGood ? cv > ca : cv < ca) ? "ok" : "");
   var roeTop = peers.every(function (r) { return !isFinite(r.roe) || B.roe > r.roe; }), roeLow = peers.every(function (r) { return !isFinite(r.roe) || B.roe < r.roe; });
   var cTop = peers.every(function (r) { return !isFinite(r[CU.k]) || cv > r[CU.k]; }), cLow = peers.every(function (r) { return !isFinite(r[CU.k]) || cv < r[CU.k]; });
   var fast = peers.every(function (r) { return B.pg > r.pg; }), slow = peers.every(function (r) { return B.pg < r.pg; });
-  var morePay = PE.filter(function (k) { return (PD.f[k] || {}).payout_fy2025 > fv("payout_fy2025"); }).length, G = SC.grow;
-  note("#exPeers", "<p><b>Dalam bahasa sederhana.</b> " + (havePx ? me + " dihargai sekitar " + x1(prem) + " rata-rata pembanding atas nilai buku dan " + x1(premE) + " atas laba. " : "") + "ROE-nya " + f1(B.roe, "%") + " (" + (roeTop ? "tertinggi dari keempatnya" : roeLow ? "terendah dari keempatnya" : "di tengah keempatnya") + ") dan " + CU.what + f1(cv, "%") + " (" + (cTop ? CU.top : cLow ? CU.low : "di tengah keempatnya") + "). Dari sisi pertumbuhan, laba H1 naik " + spct(B.pg / 100, 1) + " dibanding rata-rata pembanding " + spct(AV.pg / 100, 0) + " (" + (fast ? "tercepat dari keempatnya" : slow ? "terlambat dari keempatnya" : "di tengah keempatnya") + "), dengan " + G.what + spct(B[G.k] / 100, 0) + " dibanding " + spct(AV[G.k] / 100, 0) + ". Imbal hasil dividen adalah campuran dividen dan harga, jadi imbal yang lebih tinggi di sini sebagian besar berarti harga yang lebih rendah terhadap laba" + (morePay > 0 ? ", dan " + morePay + " dari 3 pembanding juga membagikan porsi laba lebih besar dari " + me : "") + ".</p>" +
-    "<p><b>Cara memakainya.</b> Selisih kelipatan hanya wajar bila selisih kualitas di baliknya bertahan. Bandingkan selisih PBV dengan selisih ROE dan pertumbuhan: bank yang menghasilkan lebih banyak dan tumbuh lebih cepat dari pembandingnya tetapi lebih murah berarti salah harga, atau membawa risiko yang tidak terlihat di tabel ini." + TK.x.peerTail(rows, B) + "</p><p class=\"small muted\">" + SC.note + "</p>");
-  $("#pSrc").innerHTML = "Fundamental pembanding dari tab Fundamental di sheet harga bank pembanding; harga dari sheet yang sama." + (PD.url ? " <a href=\"" + PD.url + "\" target=\"_blank\" rel=\"noopener\">Buka sheet pembanding</a>" : "");
+  var morePay = PE.filter(function (k) { return (PD.f[k] || {}).payout_fy > fyv("payout"); }).length, G = SC.grow;
+  note("#exPeers", "<p><b>Dalam bahasa sederhana.</b> " + (havePx ? me + " dihargai sekitar " + x1(prem) + " rata-rata pembanding atas nilai buku dan " + x1(premE) + " atas laba. " : "") + "ROE-nya " + f1(B.roe, "%") + " (" + (roeTop ? "tertinggi dari " + allOf(rows.length) : roeLow ? "terendah dari " + allOf(rows.length) : "di tengah " + allOf(rows.length)) + ") dan " + CU.what + f1(cv, "%") + " (" + (cTop ? CU.top : cLow ? CU.low : "di tengah " + allOf(rows.length)) + "). Dari sisi pertumbuhan, laba " + pgLabel() + " naik " + spct(B.pg / 100, 1) + " dibanding rata-rata pembanding " + spct(AV.pg / 100, 0) + " (" + (fast ? "tercepat dari " + allOf(rows.length) : slow ? "terlambat dari " + allOf(rows.length) : "di tengah " + allOf(rows.length)) + "), dengan " + G.what + spct(B[G.k] / 100, 0) + " dibanding " + spct(AV[G.k] / 100, 0) + ". Imbal hasil dividen adalah campuran dividen dan harga, jadi imbal yang lebih tinggi di sini sebagian besar berarti harga yang lebih rendah terhadap laba" + (morePay > 0 ? ", dan " + morePay + " dari 3 pembanding juga membagikan porsi laba lebih besar dari " + me : "") + ".</p>" +
+    "<p><b>Cara memakainya.</b> Selisih kelipatan hanya wajar bila selisih kualitas di baliknya bertahan. Bandingkan selisih PBV dengan selisih ROE dan pertumbuhan: " + NOUN() + " yang menghasilkan lebih banyak dan tumbuh lebih cepat dari pembandingnya tetapi lebih murah berarti salah harga, atau membawa risiko yang tidak terlihat di tabel ini." + TK.x.peerTail(rows, B) + "</p><p class=\"small muted\">" + SC.note + "</p>");
+  $("#pSrc").innerHTML = (TK.shared ? "Fundamental pembanding dari tab Fundamental di sheet Saham (Kode masing-masing); harga dari tab Harga-nya. Pembanding dipilih di tab Daftar." : "Fundamental pembanding dari tab Fundamental di sheet harga bank pembanding; harga dari sheet yang sama.") + (PD.url ? " <a href=\"" + PD.url + "\" target=\"_blank\" rel=\"noopener\">Buka sheet pembanding</a>" : "");
   renderMoves();
 }
 /* Identity colours: the stock in focus is amber (as in the ticker switch), peers
@@ -571,8 +640,9 @@ function setPeerColours() {
 }
 function renderMoves() {
   setPeerColours();
-  var me = TK.code, PE = peersOf(), SC = SEC(), ch = $("#chPeers"), ok = PD.p && S.prices.length > 120;
+  var me = TK.code, PE = peersOf().filter(function (k) { return PD.p && PD.p[k] && PD.p[k].t.length > 30; }), SC = SEC(), ch = $("#chPeers"), ok = PD.p && PE.length && S.prices.length > 120;
   $("#pShockBox").classList.toggle("hidden", !ok);
+  $("#pMoveTitle").textContent = "Pergerakan harga " + (["", "", "kedua", "ketiga", "keempat", "kelima", "keenam"][PE.length + 1] || PE.length + 1) + " saham";
   if (!ok) { ch.innerHTML = ""; $("#pLegend").innerHTML = ""; note("#exMove", "<p class=\"muted\">Harga pembanding belum termuat.</p>"); return; }
   var n = S.prices.length, w = $("#pWin").value, i0 = w === "ytd" ? lowerIdx(S.dates, Date.UTC(2025, 11, 31)) : n - 1 - Math.round(Number(w) * TD);
   i0 = Math.max(0, Math.min(n - 30, i0));
@@ -585,7 +655,7 @@ function renderMoves() {
     ser[k] = { x: xs, y: ys };
   });
   var pad = (hi - lo) * 0.06;
-  chart(ch, { xmin: t0, xmax: t1, ymin: Math.max(0, lo - pad), ymax: hi + pad, yfmt: function (v) { return v.toFixed(0); }, xticks: timeTicks(t0, t1).filter(function (_, q) { return (ch.clientWidth || 720) < 480 ? q % 3 === 0 : true; }), R: 92, H: (ch.clientWidth || 720) < 480 ? 250 : 290, label: "Harga empat " + SC.noun + " disetel ke 100",
+  chart(ch, { xmin: t0, xmax: t1, ymin: Math.max(0, lo - pad), ymax: hi + pad, yfmt: function (v) { return v.toFixed(0); }, xticks: timeTicks(t0, t1).filter(function (_, q) { return (ch.clientWidth || 720) < 480 ? q % 3 === 0 : true; }), R: 92, H: (ch.clientWidth || 720) < 480 ? 250 : 290, label: "Harga " + names.length + " " + SC.noun + " disetel ke 100",
     layers: function (fx, fy, k) {
       var s2 = '<line x1="' + k.x0 + '" x2="' + k.x1 + '" y1="' + fy(100) + '" y2="' + fy(100) + '" stroke="var(--fg)" stroke-opacity=".3" stroke-dasharray="4 4"/>';
       PE.concat([me]).forEach(function (nm) { var d = ser[nm]; if (d) s2 += '<path d="' + pathD(d.x, d.y, fx, fy) + '" fill="none" stroke="' + PCOL[nm] + '" stroke-width="' + (nm === me ? 2.6 : 1.5) + '"' + (PDASH[nm] ? ' stroke-dasharray="5 3"' : '') + '/>'; });
@@ -599,7 +669,7 @@ function renderMoves() {
   $("#pLegend").innerHTML = names.filter(function (nm) { return ser[nm]; }).map(function (nm) { return '<span><i style="background:' + PCOL[nm] + ';height:' + (nm === me ? 4 : 2) + 'px;vertical-align:4px"></i>' + nm + '</span>'; }).join("") + "<span>Garis putus-putus: level awal</span>";
   var fin = {}; names.forEach(function (k) { if (ser[k]) fin[k] = ser[k].y[ser[k].y.length - 1] / 100 - 1; });
   var pavg = avgOf(PE.map(function (k) { return fin[k]; }).filter(isFinite));
-  note("#exMove", "<p><b>Yang terlihat.</b> Sejak " + fmtDay(t0) + ", " + me + " " + spct(fin[me], 0) + " sementara pembanding " + PE.map(function (k) { return isFinite(fin[k]) ? k + " " + spct(fin[k], 0) : ""; }).filter(Boolean).join(", ") + ". " + (fin[me] < pavg - 0.03 ? "Jadi seluruh sektor bergerak, tetapi " + me + " lebih buruk dari pesaingnya. " : fin[me] > pavg + 0.03 ? me + " lebih baik dari pesaingnya. " : me + " bergerak kira-kira sejalan dengan pesaingnya. ") + (pavg < -0.1 ? "Gerak seluas ini menunjuk ke sesuatu yang memengaruhi seluruh sektor perbankan, bukan satu perusahaan." : "") + "</p>");
+  note("#exMove", "<p><b>Yang terlihat.</b> Sejak " + fmtDay(t0) + ", " + me + " " + spct(fin[me], 0) + " sementara pembanding " + PE.map(function (k) { return isFinite(fin[k]) ? k + " " + spct(fin[k], 0) : ""; }).filter(Boolean).join(", ") + ". " + (fin[me] < pavg - 0.03 ? "Jadi seluruh sektor bergerak, tetapi " + me + " lebih buruk dari pesaingnya. " : fin[me] > pavg + 0.03 ? me + " lebih baik dari pesaingnya. " : me + " bergerak kira-kira sejalan dengan pesaingnya. ") + (pavg < -0.1 ? "Gerak seluas ini menunjuk ke sesuatu yang memengaruhi seluruh " + (isBank() ? "sektor perbankan" : "kelompok ini") + ", bukan satu perusahaan." : "") + "</p>");
   var lo2 = Math.max(1, n - 60), wi = lo2, wr = 0;
   for (i = lo2; i < n; i++) { var r = S.prices[i] / S.prices[i - 1] - 1; if (r < wr) { wr = r; wi = i; } }
   if (wr > -0.07) { $("#pShockBox").classList.add("hidden"); return; }
@@ -693,6 +763,7 @@ function cumulativeSeries() {
 }
 function renderFlows() {
   if (!S.prices.length) return;
+  if (!gate("flow", FL.rows.length > 0, fillHint("Belum ada baris arus asing untuk " + TK.code + " atau seluruh pasar (Kode PASAR)."))) return;
   var me = TK.code, hasPx = pxOK(), sig = flowSignals(), days = dayList(), cs = cumulativeSeries(), wk = fkind("stk_week"), mk = fkind("mkt_week"), n = S.prices.length;
   var oks = sig.list.filter(function (o) { return o.status === "ok"; }), bads = sig.list.filter(function (o) { return o.status === "bad"; }), sc = sig.score;
   function join(a) { return listAnd(a.map(function (o) { return o.short; })); }
@@ -846,7 +917,7 @@ function dvData() {
   });
   return { rows: rows, open: open };
 }
-var DVS = (TK.dvs || []).map(function (s) { return { n: s.n, g: s.g, p: s.p }; }), DVST = { eps: NaN, dps: NaN, paid: 0, cur: NaN, fy: 0 }, dvBuilt = false;
+var DVS = [], DVST = { eps: NaN, dps: NaN, paid: 0, cur: NaN, fy: 0 }, dvBuilt = false;
 function buildScen() {
   var h = '<thead><tr><th>Kasus</th><th>Pertumbuhan laba %</th><th>Rasio pembayaran %</th><th>Dividen</th><th>Vs tahun lalu</th><th>Imbal di harga hari ini</th><th>' + TK.x.stillCol + '</th></tr></thead><tbody>';
   DVS.forEach(function (s, i) { h += '<tr><td><b>' + s.n + '</b></td><td><input type="number" class="dvin" id="dvG' + i + '" value="' + s.g + '" step="1" min="-40" max="40" aria-label="' + s.n + ', pertumbuhan laba"></td><td><input type="number" class="dvin" id="dvP' + i + '" value="' + s.p + '" step="1" min="10" max="100" aria-label="' + s.n + ', rasio pembayaran"></td><td id="dvD' + i + '"></td><td id="dvC' + i + '"></td><td id="dvY' + i + '"></td><td id="dvR' + i + '"></td></tr>'; });
@@ -872,7 +943,7 @@ function dvScenCalc() {
 function renderDividends() {
   if (!S.prices.length) return;
   var D = dvData(), R = D.rows, open = D.open, n = R.length, me = TK.code;
-  if (n < 2) { $("#dVerdict").textContent = "Riwayat dividen belum terbaca dari tab Dividen."; return; }
+  if (!gate("div", n >= 2 && isFinite(R[n - 1].eps), fillHint(n < 2 ? "Dividen butuh minimal dua tahun buku dengan dividen final di tab Dividen." : "Dividen butuh laba per saham akhir tahun FY" + R[n - 1].fy + " di tab Riwayat fundamental, untuk menghitung rasio pembayaran."))) return;
   var live = pxOK(), first = R[0], last = R[n - 1], cur = live ? S.prices[S.prices.length - 1] : NaN, asof = live ? S.dates[S.dates.length - 1] : DV.rows[DV.rows.length - 1].t;
   var ttm = 0; DV.rows.forEach(function (r) { if (r.t > asof - 365 * DAY && r.t <= asof) ttm += r.dps; });
   var ups = R.filter(function (y) { return y.g > 0; }), cuts = R.filter(function (y) { return y.g < 0; }), yrs = n - 1;
@@ -885,21 +956,21 @@ function renderDividends() {
   var cutTxt = cuts.length ? (cuts.length === 1 ? "Dipotong sekali, pada " : "Dipotong " + cuts.length + " kali, pada ") + cuts.map(function (y) { return "FY" + y.fy + " (" + spct(y.g, 1) + ")"; }).join(", ") + "." : "Tidak pernah dipotong dalam jendela ini.";
   var maxPay = Math.max.apply(null, pays), isMax = last.pay >= maxPay - 1e-9, highPay = last.pay >= 0.65;
   $("#dVerdict").textContent = ups.length + " kenaikan dalam " + n + " tahun. " + (highPay ? "Dari sini dividen sebaiknya tidak diharapkan tumbuh lebih cepat dari laba." : "Masih ada ruang untuk membagikan lebih banyak.");
-  $("#dSub").textContent = me + " membayar dividen setiap tahun dalam jendela ini. " + cutTxt + " Rasio pembayarannya, bagian laba yang dibagikan ke pemegang saham, bergerak dari " + pct(first.pay, 0) + " pada FY" + first.fy + " ke " + pct(last.pay, 0) + " pada FY" + last.fy + ". Itulah sebabnya dividen tumbuh " + pct(cagrD, 0) + " setahun sementara laba per saham tumbuh " + (isFinite(cagrE) ? pct(cagrE, 0) : "jauh lebih lambat") + (cagrD > cagrE ? ": bank membagikan potongan yang makin besar." : ".") + (highPay ? " Tuas itu sebagian besar sudah terpakai." : " Rasio pembayaran masih punya ruang naik.");
+  $("#dSub").textContent = me + " membayar dividen setiap tahun dalam jendela ini. " + cutTxt + " Rasio pembayarannya, bagian laba yang dibagikan ke pemegang saham, bergerak dari " + pct(first.pay, 0) + " pada FY" + first.fy + " ke " + pct(last.pay, 0) + " pada FY" + last.fy + ". Itulah sebabnya dividen tumbuh " + pct(cagrD, 0) + " setahun sementara laba per saham tumbuh " + (isFinite(cagrE) ? pct(cagrE, 0) : "jauh lebih lambat") + (cagrD > cagrE ? ": " + NOUN() + " membagikan potongan yang makin besar." : ".") + (highPay ? " Tuas itu sebagian besar sudah terpakai." : " Rasio pembayaran masih punya ruang naik.");
   $("#dStats").innerHTML =
     stat("Dividen per saham, FY" + last.fy, dvPx(last.total), "Naik dari " + dvPx(first.total) + " pada FY" + first.fy + ": " + nd(last.total / first.total, 1) + " kali lipat.", "ok") +
     stat("Tahun dividen naik", ups.length + " dari " + n, cutTxt, cuts.length ? "warn" : "ok") +
     stat("Pertumbuhan dividen setahun", pct(cagrD, 1), "Laba per saham tumbuh " + (isFinite(cagrE) ? pct(cagrE, 1) : "n/a") + " setahun pada tahun-tahun yang sama. Setelah inflasi, dividen tumbuh " + pct(cagrR, 1) + " setahun.") +
     stat("Rasio pembayaran, FY" + last.fy, pct(last.pay, 0), "Dulu " + pct(first.pay, 0) + " pada FY" + first.fy + ". Rata-rata jendela: " + pct(avgPay, 0) + ".", last.pay > 0.7 ? "warn" : "") +
     stat("Imbal hasil dividen sekarang", isFinite(yNow) ? pct(yNow, 1) : "n/a", dvPx(ttm) + " dibayar dalam 12 bulan terakhir. Di setiap akhir tahun, imbal berkisar " + pct(minY, 1) + " sampai " + pct(maxY, 1) + ".", isFinite(yNow) ? "ok" : "");
-  var car = fv("car"), pg = fv("profit_growth_h1"), eps25 = last.eps, cover = eps25 / last.total, g3 = R.slice(-3).map(function (y) { return y.g; }), avgG = avgOf(R.map(function (y) { return y.g; })), lastG = last.g;
+  var car = fv("car"), pg = PG(), eps25 = last.eps, cover = eps25 / last.total, g3 = R.slice(-3).map(function (y) { return y.g; }), avgG = avgOf(R.map(function (y) { return y.g; })), lastG = last.g;
   var tests = [
     { name: "Rekam jejak", why: "Apakah selalu membayar, dan menghindari pemotongan?", reading: "Membayar di semua " + n + " tahun. " + cutTxt + cutWhy, status: cuts.length === 0 ? "ok" : (cuts.length === 1 && cuts[0].g > -0.1) ? "ok" : "warn" },
     { name: "Arah", why: "Apakah dividen masih naik?", reading: "Tiga perubahan terakhir " + listAnd(g3.map(function (g) { return spct(g, 0); })) + "." + (lastG < 0 ? " Perubahan terakhir adalah pemotongan." : " Masih naik" + (lastG < avgG ? ", tetapi lebih lambat dari rata-rata jendela " + pct(avgG, 0) + "." : ".")), status: lastG > 0.05 ? "ok" : lastG >= 0 ? "warn" : "bad" },
     { name: "Rasio pembayaran", why: "Berapa bagian laba yang dibagikan?", reading: pct(last.pay, 0) + " dari laba pada FY" + last.fy + (isMax ? ", tertinggi di jendela ini" : "") + " (rata-rata " + pct(avgPay, 0) + "). " + (highPay ? "Rasio ini tidak bisa naik terus, jadi pertumbuhan ke depan bertumpu pada laba." : "Masih ada ruang membagikan lebih banyak bila laba memungkinkan."), status: last.pay < 0.6 ? "ok" : last.pay <= 0.8 ? "warn" : "bad" },
     { name: "Cakupan laba", why: "Berapa kali laba menutup dividen?", reading: "Laba per saham " + px(eps25) + " menutup dividen " + dvPx(last.total) + " sebanyak " + nd(cover, 2) + " kali, dibanding " + nd(first.eps / first.total, 1) + " kali pada FY" + first.fy + ".", status: cover >= 1.5 ? "ok" : cover >= 1.2 ? "warn" : "bad" },
-    { name: "Bantalan modal", why: "Apakah bank punya modal lebih?", reading: isFinite(car) ? "Rasio modal " + nd(car, 1) + "%, dibanding batas minimum regulator di kisaran 8% sampai 14% tergantung profil risiko bank." + (car >= 20 ? TK.x.capOk : " Itu di bawah 20%, jadi rasio pembayaran tinggi bersaing dengan pertumbuhan kredit untuk modal.") : "Angka modal belum termuat.", status: isFinite(car) ? (car >= 20 ? "ok" : car >= 14 ? "warn" : "bad") : "warn" },
-    { name: "Momentum laba", why: "Apakah laba masih tumbuh?", reading: isFinite(pg) ? "Laba semester I 2026 tumbuh " + spct(pg / 100, 1) + " (FY" + last.fy + ": " + TK.x.fyG + "). Dividen hanya bisa tumbuh lebih cepat dari laba untuk sementara." : "Angka pertumbuhan laba belum termuat.", status: isFinite(pg) ? (pg > 5 ? "ok" : pg >= 0 ? "warn" : "bad") : "warn" },
+    (TK.x.capTest ? TK.x.capTest() : { name: "Bantalan modal", why: "Apakah bank punya modal lebih?", reading: isFinite(car) ? "Rasio modal " + nd(car, 1) + "%, dibanding batas minimum regulator di kisaran 8% sampai 14% tergantung profil risiko bank." + (car >= 20 ? TK.x.capOk : " Itu di bawah 20%, jadi rasio pembayaran tinggi bersaing dengan pertumbuhan kredit untuk modal.") : "Angka modal belum termuat.", status: isFinite(car) ? (car >= 20 ? "ok" : car >= 14 ? "warn" : "bad") : "warn" }),
+    { name: "Momentum laba", why: "Apakah laba masih tumbuh?", reading: isFinite(pg) ? "Laba " + (TK.shared ? pgLabel() : "semester I 2026") + " tumbuh " + spct(pg / 100, 1) + " (FY" + last.fy + ": " + (typeof TK.x.fyG === "function" ? TK.x.fyG(epsOfYear(last.fy) / epsOfYear(last.fy - 1) - 1) : TK.x.fyG) + "). Dividen hanya bisa tumbuh lebih cepat dari laba untuk sementara." : "Angka pertumbuhan laba belum termuat.", status: isFinite(pg) ? (pg > 5 ? "ok" : pg >= 0 ? "warn" : "bad") : "warn" },
   ];
   var lab = { ok: "Mendukung", warn: "Awasi", bad: "Peringatan" };
   $("#dScore").innerHTML = "<thead><tr><th>Uji</th><th style=\"text-align:left\">Kata data</th><th style=\"text-align:left\">Bacaan</th></tr></thead><tbody>" + tests.map(function (o) { return "<tr><td><b>" + o.name + "</b><br><span class=\"muted small\">" + o.why + "</span></td><td style=\"text-align:left\">" + o.reading + "</td><td class=\"" + o.status + "\" style=\"text-align:left;white-space:nowrap\">● " + lab[o.status] + "</td></tr>"; }).join("") + "</tbody>";
@@ -923,10 +994,11 @@ function renderDividends() {
   } else note("#exDY", "<p>Butuh harga bertanggal untuk melihat berapa bagian imbal hari ini yang datang dari dividen dan berapa dari harga.</p>");
   var pp = R.filter(function (y) { return isFinite(y.pay); }).map(function (y) { return { x: y.fy, y: y.pay, l: "FY" + String(y.fy).slice(2) }; });
   drawDVLine("#chDP", pp, { label: "Rasio pembayaran " + me + " per tahun", dec: 0, ymax: 1.05, ref: 1, refLabel: "Seluruh laba" });
-  var peerTxt = "", pe = peersOf().filter(function (k) { return PD.f[k] && isFinite(PD.f[k].payout_fy2025); });
-  if (pe.length) peerTxt = " Sebagai pembanding, " + listAnd(pe.map(function (k) { return k + " " + Math.round(PD.f[k].payout_fy2025) + "%"; })) + " adalah bagian laba yang dibagikan untuk FY2025, dibanding " + Math.round(last.pay * 100) + "% untuk " + me + "." + TK.x.dpLast;
-  note("#exDP", "<p><b>Dalam bahasa sederhana.</b> Rasio pembayaran menunjukkan berapa dari setiap rupiah laba yang keluar dari bank sebagai dividen. " + TK.x.dpIntro(last) + "</p><p>Hitungannya sederhana: begitu rasio pembayaran mendekati 100%, satu-satunya cara menaikkan dividen adalah menaikkan laba." + peerTxt + "</p>");
+  var peerTxt = "", pe = peersOf().filter(function (k) { return PD.f[k] && isFinite(PD.f[k].payout_fy); });
+  if (pe.length) peerTxt = " Sebagai pembanding, " + listAnd(pe.map(function (k) { return k + " " + Math.round(PD.f[k].payout_fy) + "%"; })) + " adalah bagian laba yang dibagikan untuk FY" + FY() + ", dibanding " + Math.round(last.pay * 100) + "% untuk " + me + "." + TK.x.dpLast;
+  note("#exDP", "<p><b>Dalam bahasa sederhana.</b> Rasio pembayaran menunjukkan berapa dari setiap rupiah laba yang keluar dari " + NOUN() + " sebagai dividen. " + TK.x.dpIntro(last) + "</p><p>Hitungannya sederhana: begitu rasio pembayaran mendekati 100%, satu-satunya cara menaikkan dividen adalah menaikkan laba." + peerTxt + "</p>");
   DVST = { eps: last.eps, dps: last.total, paid: open ? open.interim : 0, cur: cur, fy: open ? open.fy : last.fy + 1 };
+  if (TK.shared && !dvBuilt && isFinite(last.pay)) DVS.forEach(function (sc) { sc.p = Math.round(last.pay * 100); });
   if (!dvBuilt) buildScen();
   $("#dvScenCap").textContent = "Pilih pertumbuhan laba dan rasio pembayaran untuk FY" + DVST.fy + ". Tabel mengubahnya menjadi dividen per saham, dengan laba per saham FY" + last.fy + " " + px(last.eps) + " sebagai titik awal. Ubah kotak isian.";
   dvScenCalc();
@@ -987,38 +1059,69 @@ function valuesOf(id) {
   return { status: "ok", rows: rows, meta: d.meta };
 }
 function metaOf(id) { var m = (window.EO_META || {}).datasets || {}; return m[id] || {}; }
+/* Rows of a shared Saham tab for one stock (first column = Kode), without the Kode. */
+function rowsFor(id, code, alsoMarket) {
+  return valuesOf(id).rows.filter(function (r) { var k = String(r[0] || "").trim().toUpperCase(); return k === code || (alsoMarket && k === "PASAR"); }).map(function (r) { return r.slice(1); });
+}
+function ownRows(kind) { return TK.shared ? rowsFor(TK.ds[kind], TK.code, kind === "flow") : valuesOf(TK.ds[kind]).rows; }
+function priceSeries(rows) {
+  var pr = rows.map(function (r) { return { t: toTime(r[0]), v: numOf(r[1]) }; }).filter(function (r) { return isFinite(r.t) && isFinite(r.v) && r.v > 0; }).sort(function (a, b) { return a.t - b.t; });
+  var t = [], c = [];
+  pr.forEach(function (r) { if (t.length && t[t.length - 1] === r.t) { c[c.length - 1] = r.v; return; } t.push(r.t); c.push(r.v); });
+  return { t: t, c: c };
+}
+/* A peer's numbers from Fundamental rows (Kunci, Keterangan, Nilai, ...), in the
+   shape renderPeers reads. Book value and earnings per share are derived. */
+function peerFund(rows, name) {
+  var m = {}; rows.forEach(function (r) { if (r[0]) m[String(r[0]).trim()] = numOf(r[2]); });
+  var y = isFinite(m.fy_last) ? m.fy_last : FY(), sh = m.shares_out * 1e9;
+  return { name: name, bvps: m.equity_parent * 1e12 / sh, eps_ttm: m.net_profit_ttm * 1e12 / sh, dps_fy: m["dps_fy" + y], payout_fy: m["payout_fy" + y],
+    roe: m.roe, nim: m.nim, npl: m.npl, car: m.car, profit_growth_h1: isFinite(m.profit_growth_h1) ? m.profit_growth_h1 : m.profit_growth,
+    loan_growth: m.loan_growth, net_margin: m.net_margin, der: m.der, revenue_growth: m.revenue_growth };
+}
 function ingest() {
   var p = valuesOf(TK.ds.price);
   if (p.status !== "ok") return p;
-  var pr = p.rows.map(function (r) { return { t: toTime(r[0]), v: numOf(r[1]) }; }).filter(function (r) { return isFinite(r.t) && isFinite(r.v) && r.v > 0; }).sort(function (a, b) { return a.t - b.t; });
-  var dates = [], prices = [];
-  pr.forEach(function (r) { if (dates.length && dates[dates.length - 1] === r.t) { prices[prices.length - 1] = r.v; return; } dates.push(r.t); prices.push(r.v); });
-  if (prices.length < 60) return { status: "error", message: "Harga " + TK.code + " terlalu sedikit (" + prices.length + " baris)." };
-  S = { dates: dates, prices: prices, hasDates: true, sample: false };
-  F.map = {}; valuesOf(TK.ds.fund).rows.forEach(function (r) { if (r[0]) F.map[String(r[0]).trim()] = numOf(r[2]); }); F.note = TK.fundNote;
-  FH.rows = valuesOf(TK.ds.fh).rows.map(function (r) { return { t: toTime(r[0]), bv: numOf(r[1]), eps: numOf(r[2]), dps: numOf(r[3]) }; }).filter(function (r) { return isFinite(r.t) && isFinite(r.bv) && isFinite(r.eps); }).sort(function (a, b) { return a.t - b.t; });
-  DV.rows = valuesOf(TK.ds.dv).rows.map(function (r) { return { t: toTime(r[0]), fy: numOf(r[1]), type: String(r[2] || "").trim().toLowerCase(), dps: numOf(r[3]), note: r[4] || "" }; }).filter(function (r) { return isFinite(r.t) && isFinite(r.fy) && isFinite(r.dps) && r.dps > 0 && (r.type === "interim" || r.type === "final"); }).sort(function (a, b) { return a.t - b.t; });
-  DV.note = "Dividen dibaca dari tab Dividen di sheet " + TK.code + ".";
-  FL.rows = mkFlowRows(valuesOf(TK.ds.flow).rows); FL.note = TK.flowNote;
+  var ps = priceSeries(p.rows);
+  if (ps.c.length < 60) return { status: "error", message: "Harga " + TK.code + " terlalu sedikit (" + ps.c.length + " baris)" + (TK.shared ? "; Google Finance mungkin belum mengisi tab Harga " + TK.code + "." : ".") };
+  S = { dates: ps.t, prices: ps.c, hasDates: true, sample: false };
+  F.map = {}; F.notes = {};
+  ownRows("fund").forEach(function (r) { if (r[0]) { var k = String(r[0]).trim(); F.map[k] = numOf(r[2]); F.notes[k] = r[4] || ""; } });
+  F.note = TK.fundNote;
+  FH.rows = ownRows("fh").map(function (r) { return { t: toTime(r[0]), bv: numOf(r[1]), eps: numOf(r[2]), dps: numOf(r[3]) }; }).filter(function (r) { return isFinite(r.t) && isFinite(r.bv) && isFinite(r.eps); }).sort(function (a, b) { return a.t - b.t; });
+  DV.rows = ownRows("dv").map(function (r) { return { t: toTime(r[0]), fy: numOf(r[1]), type: String(r[2] || "").trim().toLowerCase(), dps: numOf(r[3]), note: r[4] || "" }; }).filter(function (r) { return isFinite(r.t) && isFinite(r.fy) && isFinite(r.dps) && r.dps > 0 && (r.type === "interim" || r.type === "final"); }).sort(function (a, b) { return a.t - b.t; });
+  DV.note = "Dividen dibaca dari tab Dividen di sheet " + (TK.shared ? "Saham" : TK.code) + ".";
+  FL.rows = mkFlowRows(ownRows("flow")); FL.note = TK.flowNote;
   var c = valuesOf("cpi").rows.map(function (r) { return { t: toTime(r[0]), v: numOf(r[1]) }; }).filter(function (r) { return isFinite(r.t) && isFinite(r.v); }).sort(function (a, b) { return a.t - b.t; });
   setCPI(c); setInflDefaults();
   var SC = SEC();
-  PD.f = {}; valuesOf(SC.fundDs).rows.forEach(function (r) {
-    var k = String(r[0] || "").trim().toUpperCase(); if (!k) return;
-    PD.f[k] = { name: r[1], bvps: numOf(r[2]), eps_ttm: numOf(r[3]), dps_fy2025: numOf(r[4]), payout_fy2025: numOf(r[5]), roe: numOf(r[6]), nim: numOf(r[7]), npl: numOf(r[8]), car: numOf(r[9]), profit_growth_h1: numOf(r[10]), loan_growth: numOf(r[11]) };
-  });
-  var pp = valuesOf(SC.priceDs).rows;
-  PD.p = null;
-  if (pp.length) {
+  PD.f = {}; PD.p = null;
+  if (TK.shared) {
+    // each peer: its own price tab (or its older sheet, e.g. BMRI), and its Fundamental rows
+    var meta = (window.EO_META || {}).datasets || {}, daftar = valuesOf("saham_daftar").rows;
     PD.p = {};
-    SC.all.forEach(function (code, k) {
-      var ts = [], cs = [];
-      pp.forEach(function (r) { var t = toTime(r[3 * k]), v = numOf(r[3 * k + 1]); if (isFinite(t) && isFinite(v) && v > 0) { ts.push(t); cs.push(v); } });
-      var ord = ts.map(function (_, i) { return i; }).sort(function (a, b) { return ts[a] - ts[b]; });
-      PD.p[code] = { t: ord.map(function (i) { return ts[i]; }), c: ord.map(function (i) { return cs[i]; }) };
+    peersOf().forEach(function (k) {
+      var low = k.toLowerCase(), own = window.EO_STOCKS && window.EO_STOCKS[k];
+      var pid = meta["harga_" + low] ? "harga_" + low : low + "_price";
+      PD.p[k] = priceSeries(valuesOf(pid).rows);
+      var fr = rowsFor("saham_fund", k);
+      if (!fr.length && meta[low + "_fund"]) fr = valuesOf(low + "_fund").rows;
+      var row = daftar.filter(function (r) { return String(r[0] || "").trim().toUpperCase() === k; })[0];
+      PD.f[k] = peerFund(fr, (row && row[1]) || (own && own.name) || k);
     });
+    PD.url = metaOf("saham_fund").sheet_url || "";
+  } else {
+    valuesOf(SC.fundDs).rows.forEach(function (r) {
+      var k = String(r[0] || "").trim().toUpperCase(); if (!k) return;
+      PD.f[k] = { name: r[1], bvps: numOf(r[2]), eps_ttm: numOf(r[3]), dps_fy: numOf(r[4]), payout_fy: numOf(r[5]), roe: numOf(r[6]), nim: numOf(r[7]), npl: numOf(r[8]), car: numOf(r[9]), profit_growth_h1: numOf(r[10]), loan_growth: numOf(r[11]) };
+    });
+    var pp = valuesOf(SC.priceDs).rows;
+    if (pp.length) {
+      PD.p = {};
+      SC.all.forEach(function (code, k) { PD.p[code] = priceSeries(pp.map(function (r) { return [r[3 * k], r[3 * k + 1]]; })); });
+    }
+    PD.url = metaOf(SC.fundDs).sheet_url || "";
   }
-  PD.url = metaOf(SC.fundDs).sheet_url || "";
   return { status: "ok", meta: p.meta };
 }
 
@@ -1044,7 +1147,7 @@ function series(ds, f, per) {
 }
 function renderMacro() {
   var box = $("#labMacro"); if (!box) return;
-  var me = TK.code, n = S.prices.length, tiles = [];
+  var me = TK ? TK.code : "", n = TK ? S.prices.length : 0, tiles = [];
   function tile(o) {
     var rows = o.rows; if (!rows || !rows.length) return;
     var last = rows[rows.length - 1], prev = rows[rows.length - 2], v = last.v, raw = 0, chg = "";
@@ -1099,16 +1202,58 @@ function toast(msg, kind) {
   t.textContent = msg; t.className = "adm-toast show " + (kind || "");
   clearTimeout(toast._t); toast._t = setTimeout(function () { t.className = "adm-toast"; }, kind === "bad" ? 9000 : 4500);
 }
-function fillChrome() {
+/* Once we know which stock this is: names, defaults, scenario rows. */
+function setupTK() {
   document.title = TK.code + " · Saham";
-  $("#labCode").textContent = TK.code; $("#labSector").textContent = TK.sector === "bank" ? "Bank" : TK.sector;
+  $("#labCode").textContent = TK.code; $("#labSector").textContent = isBank() ? "Bank" : "Emiten";
   $("#labFull").textContent = TK.full; $("#labTitle").textContent = TK.name;
   $("#lgI").textContent = TK.x.lgI; $("#lgF").textContent = TK.x.lgF; $("#ddmNote").textContent = TK.x.ddmNote;
   [["vCoe", TK.val.coe], ["vG", TK.val.g], ["vEg", TK.val.eg], ["vRoeT", TK.val.roeT]].forEach(function (a) { $("#" + a[0]).value = a[1]; });
-  var sw = $("#tkSwitch"), codes = Object.keys(window.EO_STOCKS || {});
-  sw.innerHTML = '<span class="lab-tk-l">Saham</span>' + codes.map(function (c) { return '<button type="button" class="adm-btn" data-tk="' + c + '" aria-pressed="' + (c === TK.code) + '">' + c + '</button>'; }).join("");
-  sw.querySelectorAll("button").forEach(function (b) { b.addEventListener("click", function () { if (b.dataset.tk !== TK.code) location.search = "?tk=" + b.dataset.tk; }); });
+  DVS = (TK.dvs || []).map(function (d) { return { n: d.n, g: d.g, p: d.p }; }); dvBuilt = false; genSec = null;
+  $("#tkSwitch").innerHTML = '<span class="adm-btn" aria-pressed="true">' + TK.code + '</span>';
 }
+/* A stock without its own js/stock/<CODE>.js: look for its row in the Daftar tab. */
+function resolveTK() {
+  if (TK) return "ok";
+  if (window.dash.data("saham_daftar").status === "loading") return "loading";
+  var code = String(window.EO_TK || "").toUpperCase();
+  var row = valuesOf("saham_daftar").rows.filter(function (r) { return String(r[0] || "").trim().toUpperCase() === code; })[0];
+  if (!row || !window.EOGeneric) return "unknown";
+  TK = window.EOGeneric.make({ code: code, name: row[1], sector: row[2], peers: row[3] });
+  setupTK();
+  return "ok";
+}
+/* Not registered yet: offer to add it (backend/stocks.py does the work). */
+function showAdd() {
+  var code = String(window.EO_TK || "").toUpperCase(), ok = /^[A-Z]{4}$/.test(code), main = $("main.lab");
+  main.classList.add("adding"); $("#addStock").classList.remove("hidden");
+  document.title = code + " · Saham";
+  $("#labCode").textContent = code; $("#labSector").textContent = "Belum terdaftar"; $("#labFull").textContent = "tambahkan untuk melihat analisisnya";
+  $("#lastChip").classList.add("hidden");
+  $("#labTitle").textContent = ok ? "Saham " + code : "Kode tidak dikenal";
+  $("#tkSwitch").innerHTML = ok ? '<span class="adm-btn" aria-pressed="true">' + code + '</span>' : "";
+  $("#labStatus").textContent = ok ? code + " belum ada di daftar saham" : "";
+  $("#addTitle").textContent = ok ? "Tambahkan " + code + " ke daftar saham" : "“" + code + "” bukan kode saham BEI";
+  $("#addForm").classList.toggle("hidden", !ok);
+  var created = !!metaOf("saham_daftar").sheet_url;
+  $("#addLede").innerHTML = ok ? "Halaman ini sama seperti BMRI: profil gerak harga, valuasi, arus asing dan dividen. Harga harian diambil otomatis dari Google Finance; fundamental, dividen dan arus asing diisi di sheet " + (created ? "<a href=\"" + metaOf("saham_daftar").sheet_url + "\" target=\"_blank\" rel=\"noopener\">IEO Saham</a>" : "<b>IEO Saham</b>, yang dibuat di Google Drive Anda saat saham pertama ditambahkan") + ". Profil langsung bisa dibaca; tab lain terisi begitu datanya ada."
+    : "Kode saham BEI terdiri dari empat huruf, misalnya BBRI atau TLKM. Ketik kode di kotak saham pada menu kiri atau di bilah perintah.";
+}
+$("#addGo").addEventListener("click", function () {
+  var code = String(window.EO_TK || "").toUpperCase(), btn = this, msg = $("#addMsg");
+  if (!window.EOJobs) return;
+  btn.disabled = true; msg.textContent = "Menyiapkan tab dan formula di Google Sheet…";
+  window.EOJobs.run("/api/stocks", { code: code, name: $("#addName").value, sector: $("#addSector").value, peers: $("#addPeers").value.split(/[,\s;/]+/).filter(Boolean) })
+    .then(function (r) {
+      var w = r && r.warnings && r.warnings.length;
+      msg.textContent = w ? r.warnings.join(" ") : code + " ditambahkan. Memuat halamannya…";
+      toast(w ? "Ditambahkan, dengan catatan: " + r.warnings[0] : code + " ditambahkan ke sheet Saham.", w ? "warn" : "ok");
+      window.dispatchEvent(new CustomEvent("eo:stocks"));
+      return window.dash.reload();
+    })
+    .catch(function (e) { msg.textContent = "Gagal: " + (e && e.message || e); toast("Gagal menambahkan " + code + ": " + (e && e.message || e), "bad"); })
+    .then(function () { btn.disabled = false; });
+});
 function updateChrome(res) {
   var n = S.prices.length, last = S.prices[n - 1], prev = S.prices[n - 2], ch = last / prev - 1;
   $("#lastChip").innerHTML = "<b>" + px(last) + "</b> <span class=\"" + (ch >= 0 ? "ok" : "bad") + "\" style=\"color:var(--" + (ch >= 0 ? "ok" : "tail") + ")\">" + spct(ch, 1) + "</span> · " + fmtDay(S.dates[n - 1]);
@@ -1119,6 +1264,10 @@ function updateChrome(res) {
 }
 var firstDraw = true;
 function draw() {
+  var st = resolveTK();
+  if (st === "loading") { $("#labStatus").textContent = "Memuat data\u2026"; return; }
+  if (st === "unknown") { showAdd(); renderMacro(); return; }
+  $("main.lab").classList.remove("adding"); $("#addStock").classList.add("hidden"); $("#lastChip").classList.remove("hidden");
   var res = ingest(), banner = $("#noData");
   if (res.status === "loading") { $("#labStatus").textContent = "Memuat data…"; return; }
   if (res.status !== "ok") {
@@ -1147,7 +1296,8 @@ $("#dvReal").addEventListener("change", function () { renderDividends(); });
 $("#toVal").addEventListener("click", function () { showTab("val"); window.scrollTo(0, 0); });
 window.addEventListener("hashchange", function () { var h = location.hash.slice(1); if (TABS.indexOf(h) >= 0 && h !== curTab) showTab(h, true); });
 $("#labRefresh").addEventListener("click", function () {
-  var btn = this, ids = Object.keys(TK.ds).map(function (k) { return TK.ds[k]; }).concat([SEC().priceDs, SEC().fundDs, "cpi"]);
+  // everything this page shows: the stock, its peers, the shared tabs and the macro tiles
+  var btn = this, ids = Object.keys(((window.EO_META || {}).datasets) || {});
   if (!window.EOJobs) return;
   btn.disabled = true;
   window.EOJobs.run("/api/refresh", { ids: ids }).then(function (r) {
@@ -1157,9 +1307,9 @@ $("#labRefresh").addEventListener("click", function () {
     .then(function () { btn.disabled = false; return window.dash.reload(); });
 });
 
-window.EOLab = { pct: pct, spct: spct, fv: fv, dvPx: dvPx, px: px, stat: stat,
+window.EOLab = { pct: pct, spct: spct, fv: fv, dvPx: dvPx, px: px, stat: stat, nd: nd, pgLabel: pgLabel,
   /* latest daily close, for the stock card in the rail (terminal.js) */
   last: function () { var n = S.prices.length; return n > 1 ? { v: S.prices[n - 1], p: S.prices[n - 2], per: (function (d) { return d.getUTCDate() + " " + MONTHS[d.getUTCMonth()]; })(new Date(S.dates[n - 1])) } : { v: NaN }; } };
-fillChrome();
+if (TK) setupTK();
 if (window.dash) window.dash.onData(draw);
 })();
