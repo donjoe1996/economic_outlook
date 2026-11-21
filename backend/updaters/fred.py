@@ -1,8 +1,16 @@
-"""Updater: FRED (Federal Reserve Bank of St. Louis), no API key needed.
+"""Updater: FRED (Federal Reserve Bank of St. Louis).
 
-Reads https://fred.stlouisfed.org/graph/fredgraph.csv?id=<SERIES>, groups the
-observations by month or quarter, and proposes one Sheet row per period that
-is newer than the last period already in the Sheet.
+Two ways in, tried in this order:
+  1. the official FRED API (needs a free key: put it in the environment
+     variable FRED_API_KEY or in secrets/fred_api_key.txt). Made for
+     programs, so it is the more reliable route;
+  2. the CSV download behind FRED's web pages
+     (fredgraph.csv?id=<SERIES>), no key, but it can be slow or throttled
+     for scripts.
+Each is retried on timeouts/server errors (backend/retry.py).
+
+The observations are grouped by month or quarter, and one Sheet row is
+proposed per period newer than the last period already in the Sheet.
 
 Config (in config/datasets.yaml, under a dataset):
 
@@ -18,14 +26,49 @@ from __future__ import annotations
 
 import csv
 import io
+import json
+import os
 from collections import defaultdict
 from datetime import date
 from typing import Callable
 
-from ..config import Dataset, col_to_index
+from ..config import SECRETS_DIR, Dataset, col_to_index
+from ..retry import short_error, with_retry
 from . import periods
 
 FRED_CSV = "https://fred.stlouisfed.org/graph/fredgraph.csv?id={series}"
+FRED_API = "https://api.stlouisfed.org/fred/series/observations?series_id={series}&api_key={key}&file_type=json"
+
+
+def _api_key() -> str | None:
+    key = os.environ.get("FRED_API_KEY", "").strip()
+    if not key:
+        f = SECRETS_DIR / "fred_api_key.txt"
+        key = f.read_text(encoding="utf-8").strip() if f.exists() else ""
+    return key or None
+
+
+def _parse_api(text: str) -> list[tuple[date, float]]:
+    out = []
+    for o in json.loads(text).get("observations", []):
+        if o.get("value") not in (None, "", "."):
+            out.append((date.fromisoformat(o["date"]), float(o["value"])))
+    return out
+
+
+def fetch_series(series: str, fetch: Callable[[str], str], progress=None) -> list[tuple[date, float]]:
+    def note(attempt, exc, delay):
+        if progress:
+            progress.step(f"{series}: percobaan {attempt} gagal ({short_error(exc)}); coba lagi dalam {delay:.0f} dtk")
+
+    key = _api_key()
+    if key:
+        try:
+            return _parse_api(with_retry(lambda: fetch(FRED_API.format(series=series, key=key)), on_retry=note))
+        except Exception as exc:
+            if progress:
+                progress.step(f"{series}: FRED API gagal ({short_error(exc)}); mencoba unduhan CSV")
+    return _parse_csv(with_retry(lambda: fetch(FRED_CSV.format(series=series)), on_retry=note))
 
 
 def _parse_csv(text: str) -> list[tuple[date, float]]:
@@ -77,7 +120,7 @@ def propose(ds: Dataset, existing: list[list[str]], fetch: Callable[[str], str],
         if progress:
             progress.step(f"{ds.title}: mengambil seri {series} dari FRED")
         groups: dict[tuple[int, int], list[tuple[date, float]]] = defaultdict(list)
-        for d, v in _parse_csv(fetch(FRED_CSV.format(series=series))):
+        for d, v in fetch_series(series, fetch, progress):
             groups[_period_of(freq, d)].append((d, v))
         per_col[offset(letter)] = {
             p: (max(obs)[1] if agg == "last" else sum(v for _, v in obs) / len(obs)) for p, obs in groups.items()

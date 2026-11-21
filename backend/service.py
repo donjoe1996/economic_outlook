@@ -11,11 +11,14 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import date
 
 from .cache import Cache
+from .freshness import Freshness, assess, parse_period
 from .config import AppConfig, Dataset
 from .jobs import NO_PROGRESS, Progress
-from .sheets import SheetsAPI
+from .retry import short_error, with_retry
+from .sheets import SheetsAPI, SheetsNotAuthorized
 
 
 class UserError(ValueError):
@@ -69,6 +72,9 @@ class _StepsOnly(Progress):
     def step(self, text: str) -> None:
         self.inner.step(text)
 
+    def warn(self, text: str) -> None:
+        self.inner.warn(text)
+
 
 class Service:
     def __init__(self, cfg: AppConfig, cache: Cache, sheets: SheetsAPI):
@@ -115,27 +121,74 @@ class Service:
         Asked in small batches (not one big request) so progress can be shown
         per batch. 27 datasets = 7 requests, well inside Google's limit of
         60 read requests per minute.
+
+        One failure does not stop the pull:
+          1. each batch is retried on transient errors (timeouts, 429, 5xx);
+          2. if a batch still fails, its datasets are tried one by one, so a
+             single broken tab (e.g. renamed) cannot block its neighbours;
+          3. what still fails keeps its previous copy, is recorded for the
+             metadata page, and is reported as a warning.
+        Returns {"rows": {id: n_rows}, "failed": {id: message}}.
         """
         targets = [self.dataset(i) for i in ids] if ids else [d for d in self.cfg.datasets.values() if d.kind == "sheet"]
         targets = [d for d in targets if d.kind == "sheet"]
-        summary = {}
+        rows: dict[str, int] = {}
+        failed: dict[str, str] = {}
         progress.count(0, len(targets))
+        self._remember_tabs()
         for start in range(0, len(targets), batch):
             group = targets[start:start + batch]
             progress.step("Membaca dari Google Sheet: " + ", ".join(d.title for d in group))
-            ranges: list[str] = []
-            for d in group:
-                ranges.append(d.range.a1())
-                ranges.append(d.range.header_a1() or d.range.a1())
-            results = self.sheets.batch_get(self.cfg.spreadsheet_id, ranges)
+            try:
+                results = self._get_with_retry(group, progress)
+            except SheetsNotAuthorized:
+                raise  # nothing else can work without a sign-in
+            except Exception as exc:
+                if len(group) > 1:
+                    progress.step(f"Batch gagal ({short_error(exc)}); mencoba satu per satu")
+                results = None
             for i, d in enumerate(group):
-                values = results[2 * i]
-                header_rows = results[2 * i + 1] if d.range.header_a1() else []
-                header = _pad(header_rows[0], d.range.width) if header_rows else []
-                self.cache.put(d.id, range_a1=d.range.a1(), header=header, values=values, source="sheet")
-                summary[d.id] = len(values)
+                try:
+                    if results is not None:
+                        values, header_rows = results[2 * i], results[2 * i + 1]
+                    else:
+                        values, header_rows = self._get_with_retry([d], progress)
+                    header = _pad(header_rows[0], d.range.width) if (header_rows and d.range.header_a1()) else []
+                    self.cache.put(d.id, range_a1=d.range.a1(), header=header, values=values, source="sheet")
+                    self.cache.record(d.id, "pull", True)
+                    rows[d.id] = len(values)
+                except SheetsNotAuthorized:
+                    raise
+                except Exception as exc:
+                    msg = short_error(exc)
+                    failed[d.id] = msg
+                    self.cache.record(d.id, "pull", False, msg)
+                    progress.warn(f"{d.title}: tidak bisa ditarik ({msg}). Salinan lama tetap dipakai.")
             progress.count(start + len(group), len(targets))
-        return summary
+        return {"rows": rows, "failed": failed}
+
+    def _get_with_retry(self, group: list[Dataset], progress: Progress) -> list:
+        ranges: list[str] = []
+        for d in group:
+            ranges.append(d.range.a1())
+            ranges.append(d.range.header_a1() or d.range.a1())
+
+        def note(attempt, exc, delay):
+            progress.step(f"Percobaan {attempt} gagal ({short_error(exc)}); coba lagi dalam {delay:.0f} dtk")
+
+        return with_retry(lambda: self.sheets.batch_get(self.cfg.spreadsheet_id, ranges), on_retry=note)
+
+    def _remember_tabs(self) -> None:
+        """Tab ids let the metadata page link straight to each tab. Optional."""
+        tab_ids = getattr(self.sheets, "tab_ids", None)
+        if not tab_ids:
+            return
+        try:
+            self.cache.put_meta({"tabs": tab_ids(self.cfg.spreadsheet_id)})
+        except SheetsNotAuthorized:
+            raise
+        except Exception:
+            pass  # links fall back to the spreadsheet itself
 
     def describe(self) -> list[dict]:
         """Datasets with their columns, for the 'add data' form."""
@@ -168,6 +221,75 @@ class Service:
                 item.update(range=ds.range.a1(), columns=cols, last_rows=rows[-3:], fetched_at=doc.get("fetched_at"))
             out.append(item)
         return out
+
+    # ------------------------------------------------------------ metadata
+    # Order on the page: what needs action first.
+    _RANK = {"error": 0, "late": 1, "due": 2, "stale": 3, "gaps": 4, "unknown": 5, "ok": 6, "snapshot": 7, "static": 8}
+
+    def metadata(self, today: date | None = None) -> dict:
+        """Per dataset: newest period, what should exist by now, blanks, last pull."""
+        today = today or date.today()
+        status = self.cache.status()
+        tabs = self.cache.meta().get("tabs", {})
+        items = []
+        for ds in self.cfg.datasets.values():
+            st = status.get(ds.id, {})
+            item = {
+                "id": ds.id, "title": ds.title, "description": ds.description, "kind": ds.kind,
+                "write": ds.write, "frequency": ds.frequency, "lag_days": ds.lag_days,
+                "stale_after_days": ds.stale_after_days, "release": ds.release,
+                "release_url": ds.release_url, "note": ds.note, "updater": (ds.updater or {}).get("type"),
+                "last_pull": st.get("pull"), "last_check": st.get("check"),
+                "range": ds.range.a1() if ds.range else None,
+                "sheet_link": None, "rows": 0, "gaps": [], "fetched_at": None, "changed_at": None,
+            }
+            if ds.kind == "file":
+                f = assess("static", None, today)
+                item.update(status=f.status, status_text=f.text)
+                items.append(item)
+                continue
+            if ds.range.tab in tabs:
+                item["sheet_link"] = f"{self.cfg.sheet_url}#gid={tabs[ds.range.tab]}"
+            doc = self.cache.get(ds.id)
+            if doc is None:
+                item.update(status="error", status_text="Belum pernah ditarik dari Sheet.")
+                items.append(item)
+                continue
+            rows = [_pad(r, ds.range.width) for r in doc["values"]]
+            pcol = ds.period_col if ds.period_col is not None else ds.key[0]
+            vcol = ds.value_col
+            ends, gaps = [], []
+            for r in rows:
+                end = parse_period(r[pcol]) if pcol < len(r) else None
+                if end is None:
+                    continue
+                if vcol < len(r) and r[vcol].strip():
+                    ends.append(end)
+                elif end <= today:
+                    gaps.append(r[ds.key[0]] or r[pcol])
+            if ds.frequency == "snapshot" and not ends:
+                f = Freshness("snapshot", f"Potret satu waktu ({ds.release or 'tanpa tanggal'}). Perbarui bila ada rilis baru.")
+            else:
+                f = assess(ds.frequency, max(ends) if ends else None, today, ds.lag_days, ds.stale_after_days)
+            state, text = f.status, f.text
+            if gaps and state in ("ok", "snapshot", "unknown"):
+                state = "gaps"
+            if gaps:
+                text += f" {len(gaps)} periode masih kosong: {', '.join(gaps[:6])}{' …' if len(gaps) > 6 else ''}."
+            if st.get("pull") and not st["pull"]["ok"]:
+                state = "error"
+                text = f"Tarikan terakhir gagal ({st['pull']['message']}); yang tampil salinan lama. " + text
+            item.update(
+                status=state, status_text=text, latest=f.latest, expected=f.expected, behind=f.behind,
+                next_release=f.next_release, rows=len(rows), gaps=gaps,
+                fetched_at=doc.get("fetched_at"), changed_at=doc.get("changed_at"), source=doc.get("source"),
+            )
+            items.append(item)
+        items.sort(key=lambda x: (self._RANK.get(x["status"], 9), x["title"]))
+        counts: dict[str, int] = {}
+        for it in items:
+            counts[it["status"]] = counts.get(it["status"], 0) + 1
+        return {"today": today.isoformat(), "sheet_url": self.cfg.sheet_url, "counts": counts, "datasets": items}
 
     # --------------------------------------------------------------- write
     def upsert(self, ds_id: str, new_row: list[str], progress: Progress = NO_PROGRESS) -> dict:
@@ -221,5 +343,7 @@ class Service:
         if cells:
             progress.step(f"Menulis {len(cells)} sel ke baris {sheet_row} ({new[ds.key[0]]})")
             self.sheets.write_cells(self.cfg.spreadsheet_id, cells)
-            self.refresh([ds.id], progress=_StepsOnly(progress))
+            pulled = self.refresh([ds.id], progress=_StepsOnly(progress))
+            if pulled["failed"]:
+                progress.warn("Tersimpan di Sheet, tetapi salinan lokal belum diperbarui. Klik 'Tarik dari Sheet' nanti.")
         return {"action": action, "sheet_row": sheet_row, "cells_written": len(cells)}

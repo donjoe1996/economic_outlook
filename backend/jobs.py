@@ -28,6 +28,9 @@ class Progress:
 
     def count(self, done: int, total: int) -> None: ...
 
+    def warn(self, text: str) -> None:
+        """Something was skipped, but the job carries on."""
+
 
 NO_PROGRESS = Progress()
 
@@ -37,8 +40,9 @@ class Job(Progress):
     id: str
     kind: str
     title: str
-    state: str = "running"  # running | done | error
+    state: str = "running"  # running | done | partial (done, with warnings) | error
     steps: list[dict] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
     done: int = 0
     total: int = 0
     result: Any = None
@@ -58,6 +62,10 @@ class Job(Progress):
         with self._lock:
             self.done, self.total = done, total
 
+    def warn(self, text: str) -> None:
+        with self._lock:
+            self.warnings.append(text)
+
     def view(self) -> dict:
         with self._lock:
             now = self.finished or time.time()
@@ -74,6 +82,7 @@ class Job(Progress):
                     for s in self.steps
                 ],
                 "elapsed": round(now - self.started, 1),
+                "warnings": list(self.warnings),
                 "result": self.result,
                 "error": self.error,
             }
@@ -103,14 +112,14 @@ class JobRunner:
         def run():
             try:
                 job.result = work(job)
-                job.state = "done"
+                job.state = "partial" if job.warnings else "done"
             except Exception as exc:  # shown on the page, so keep the message readable
                 job.error = str(exc) or type(exc).__name__
                 job.state = "error"
                 traceback.print_exc()
             finally:
                 job.finished = time.time()
-                job.step("Selesai" if job.state == "done" else "Gagal")
+                job.step({"done": "Selesai", "partial": f"Selesai dengan {len(job.warnings)} peringatan"}.get(job.state, "Gagal"))
                 with job._lock:
                     job.steps[-1]["end"] = job.finished
 

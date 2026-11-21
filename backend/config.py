@@ -22,6 +22,7 @@ TOKEN_PATH = SECRETS_DIR / "token.json"
 FRONTEND_DIR = ROOT / "frontend"
 
 WRITE_MODES = ("append", "fill", "none")
+FREQUENCIES = ("monthly", "quarterly", "irregular", "snapshot", "static")
 
 _RANGE_RE = re.compile(
     r"^(?P<tab>'(?:[^']|'')+'|[^!]+)!(?P<c1>[A-Z]+)(?P<r1>\d+):(?P<c2>[A-Z]+)(?P<r2>\d*)$"
@@ -105,6 +106,15 @@ class Dataset:
     write: str = "none"               # append | fill | none
     key: tuple[int, ...] = (0,)       # column offset(s) in the range that identify a row, e.g. the period
     updater: dict[str, Any] | None = None
+    # ---- publishing schedule, for the metadata page (backend/freshness.py)
+    frequency: str = "snapshot"       # monthly | quarterly | irregular | snapshot | static
+    lag_days: int = 0                 # days after a period ends until it is usually published
+    stale_after_days: int | None = None  # irregular data: older than this = needs an update
+    value_col: int = 1                # column (offset) whose blanks count as missing data
+    period_col: int | None = None     # column with the period/date, default: first key column
+    release: str = ""                 # who publishes it and when, in words
+    release_url: str = ""             # where to find new releases
+    note: str = ""
 
     @property
     def kind(self) -> str:
@@ -147,6 +157,9 @@ def load_config(path: Path = CONFIG_PATH) -> AppConfig:
                 "otherwise new rows would fall outside it"
             )
         file = (ROOT / d["file"]) if d.get("file") else None
+        freq = d.get("frequency", "static" if file else "snapshot")
+        if freq not in FREQUENCIES:
+            raise ValueError(f"{ds_id}: frequency must be one of {FREQUENCIES}")
         if not rng and not file:
             raise ValueError(f"{ds_id}: give either range or file")
         cfg.datasets[ds_id] = Dataset(
@@ -158,5 +171,13 @@ def load_config(path: Path = CONFIG_PATH) -> AppConfig:
             write=write,
             key=_parse_key(d.get("key", 0)),
             updater=d.get("updater"),
+            frequency=freq,
+            lag_days=int(d.get("lag_days", 0)),
+            stale_after_days=d.get("stale_after_days"),
+            value_col=int(d.get("value_col", 1)),
+            period_col=d.get("period_col"),
+            release=d.get("release", ""),
+            release_url=d.get("release_url", ""),
+            note=d.get("note", ""),
         )
     return cfg

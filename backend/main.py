@@ -4,6 +4,7 @@ Fast reads answer directly:
     GET  /api/data                 every dataset, from the local cache
     GET  /api/datasets             datasets + columns (for the form)
     GET  /api/auth/status          is Google connected? (no network)
+    GET  /api/metadata             per dataset: newest period, what is due, blanks, last pull
 
 Slow actions start a background job and answer at once with the job
 ({id, state, current, done, total, steps, ...}); the page then follows it:
@@ -27,7 +28,8 @@ from .cache import Cache
 from .config import FRONTEND_DIR, load_config
 from .jobs import Job, JobRunner
 from .service import Service
-from .sheets import GoogleSheets
+from .retry import short_error
+from .sheets import GoogleSheets, SheetsNotAuthorized
 from .updaters import REGISTRY, http_get
 
 app = FastAPI(title="Indonesia Economic Outlook", docs_url="/api/docs", redoc_url=None)
@@ -67,6 +69,11 @@ def get_datasets():
     return service().describe()
 
 
+@app.get("/api/metadata")
+def get_metadata():
+    return service().metadata()
+
+
 @app.get("/api/auth/status")
 def auth_status():
     return google.status()
@@ -90,8 +97,7 @@ def get_job(job_id: str):
 def auth_login():
     def work(p: Job):
         google.sign_in(progress=p)
-        rows = service().refresh(progress=p)
-        return {"rows": rows}
+        return service().refresh(progress=p)
 
     return jobs.start("login", "Menghubungkan Google", work).view()
 
@@ -102,7 +108,7 @@ def refresh(body: RefreshBody | None = None):
 
     def work(p: Job):
         google.ensure_signed_in(progress=p)
-        return {"rows": service().refresh(ids, progress=p)}
+        return service().refresh(ids, progress=p)
 
     return jobs.start("refresh", "Menarik data dari Google Sheet", work).view()
 
@@ -131,8 +137,13 @@ def updaters_preview():
             try:
                 existing = (svc.cache.get(ds.id) or {}).get("values", [])
                 out[ds.id] = {"title": ds.title, "rows": fn(ds, existing, http_get, progress=p)}
+                svc.cache.record(ds.id, "check", True, f"{len(out[ds.id]['rows'])} periode baru")
             except Exception as exc:  # network down, source changed format, ...
-                out[ds.id] = {"title": ds.title, "error": f"{type(exc).__name__}: {exc}"}
+                # one source failing must not stop the others
+                msg = short_error(exc)
+                out[ds.id] = {"title": ds.title, "error": msg}
+                svc.cache.record(ds.id, "check", False, msg)
+                p.warn(f"{ds.title}: {msg}")
         p.count(len(targets), len(targets))
         return out
 
@@ -147,7 +158,13 @@ def updaters_apply(body: ApplyBody):
         results = []
         for i, row in enumerate(body.rows):
             p.count(i, len(body.rows))
-            results.append(svc.upsert(body.dataset, row, progress=p))
+            try:
+                results.append(svc.upsert(body.dataset, row, progress=p))
+            except SheetsNotAuthorized:
+                raise
+            except Exception as exc:  # keep going with the other rows
+                p.warn(f"Baris {row[0] if row else '?'}: {short_error(exc)}")
+                results.append({"action": "failed", "error": short_error(exc)})
         p.count(len(body.rows), len(body.rows))
         return {"results": results}
 
