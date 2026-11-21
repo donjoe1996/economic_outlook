@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import openpyxl  # noqa: E402
 
-from backend.cache import Cache  # noqa: E402
+from backend.store import Store as Cache  # noqa: E402
 from backend.config import load_config  # noqa: E402
 
 

@@ -2,24 +2,24 @@
 
 Where the data lives
 --------------------
-One shared spreadsheet, alias ``saham`` (created by the app the first time a
-stock is added; its id is kept in data/spreadsheets.local.json, or set it in
-config/datasets.yaml yourself). It holds:
+In the data store (JSON files in the Drive folder, see backend/store.py),
+one shared dataset per kind, each starting with a Kode column:
 
-    Daftar               one row per stock: Kode, Nama, Sektor, Pembanding
-    Fundamental          Kode, Kunci, Keterangan, Nilai, Satuan, Catatan
-    Riwayat fundamental  Kode, Tanggal, BVPS, EPS, DPS, Sumber
-    Dividen              Kode, Tanggal bayar, Tahun buku, Jenis, Per saham, Catatan
-    Arus asing           Kode, Mulai, Selesai, Jenis, Net, Basis, Kualitas, Sumber, Catatan
-                         (Kode PASAR = whole-market rows, shown for every stock)
-    Harga <KODE>         one tab per stock and peer: a GOOGLEFINANCE formula
+    saham_daftar  one row per stock: Kode, Nama, Sektor, Pembanding
+    saham_fund    Kode, Kunci, Keterangan, Nilai, Satuan, Catatan
+    saham_fh      Kode, Tanggal, BVPS, EPS, DPS, Sumber
+    saham_dv      Kode, Tanggal bayar, Tahun buku, Jenis, Per saham, Catatan
+    saham_flow    Kode, Mulai, Selesai, Jenis, Net, Basis, Kualitas, Sumber, Catatan
+                  (Kode PASAR = whole-market rows, shown for every stock)
 
-The five shared tabs are ordinary datasets in config/datasets.yaml
-(saham_daftar, saham_fund, saham_fh, saham_dv, saham_flow). The price tabs
-are added here, one dataset per code (harga_<kode>), from the Daftar rows.
+Prices are the one thing a Sheet still does: the price-feed spreadsheet
+(alias ``saham``; created by the app the first time, id kept in
+data/spreadsheets.local.json) has one "Harga KODE" tab per stock and peer
+with a GOOGLEFINANCE formula. Each becomes a feed dataset harga_<kode>,
+copied into the store on every pull.
 
-Stocks that predate the shared sheet (BMRI) keep their own spreadsheets and
-are listed under ``stocks_legacy:`` in the YAML.
+Stocks that predate this (BMRI) keep their own datasets and are listed under
+``stocks_legacy:`` in the YAML.
 """
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ import time
 from datetime import date
 from pathlib import Path
 
-from .cache import Cache
+from .store import Store as Cache   # the data store (formerly a cache of the Sheets)
 from .config import LOCAL_SPREADSHEETS_PATH, AppConfig, Dataset, SheetRange
 from .jobs import NO_PROGRESS, Progress
 from .retry import short_error
@@ -157,9 +157,9 @@ def price_codes(reg: dict[str, dict]) -> list[str]:
 def price_dataset(cfg: AppConfig, code: str) -> Dataset:
     return Dataset(
         id=price_id(code), title=f"Harga harian {code}",
-        description=f"Penutupan harian {code} dari Google Finance (IDX:{code}), tab '{price_tab(code)}' di sheet Saham.",
+        description=f"Penutupan harian {code} dari Google Finance (IDX:{code}), tab '{price_tab(code)}' di sheet price feed.",
         range=SheetRange.parse(f"'{price_tab(code)}'!A2:B"), write="none",
-        spreadsheet=cfg.spreadsheets.get(ALIAS, ""), alias=ALIAS, group="harga",
+        spreadsheet=cfg.spreadsheets.get(ALIAS, ""), alias=ALIAS, group="harga", source="sheet",
         frequency="irregular", stale_after_days=5,
         release="Google Finance, setiap hari bursa (formula GOOGLEFINANCE di Sheet).",
     )
@@ -229,61 +229,71 @@ def save_local_spreadsheet(alias: str, sid: str, path: Path = LOCAL_SPREADSHEETS
 
 
 # ------------------------------------------------------------- add a stock
+FEED_TITLE = "IEO Price Feed"
+
+
+def ensure_tables(svc) -> None:
+    """The shared stock tables, with their column names, even before any row."""
+    for tab, ds_id in SHARED_IDS.items():
+        ds = svc.cfg.datasets.get(ds_id)
+        if ds is not None and svc.store.doc(ds_id) is None:
+            svc.store.put(ds_id, header=TABS[tab], values=[], source="app", title=ds.title, key=ds.key)
+
+
 def add_stock(svc, code: str, name: str = "", sector: str = "umum", peers: list[str] | None = None,
               progress: Progress = NO_PROGRESS, sleep=time.sleep, local_path: Path = LOCAL_SPREADSHEETS_PATH) -> dict:
     """Register a stock and give it everything the page reads. Safe to repeat.
 
-    1. create the Saham spreadsheet (first time only) and any missing tabs;
-    2. write or update its Daftar row;
-    3. add a price tab with a GOOGLEFINANCE formula for it and each peer;
-    4. add labelled, empty Fundamental rows (to be filled by you or Claude);
-    5. copy the whole-market foreign-flow rows (Kode PASAR) the first time;
-    6. pull it all into the local copy, waiting for Google Finance to answer.
+    The data goes to the store (Drive JSON); only prices need a Sheet:
+    1. write or update its Daftar row (store);
+    2. add a "Harga KODE" tab with a GOOGLEFINANCE formula for it and each peer
+       to the price-feed spreadsheet (created in your Drive the first time);
+    3. add labelled, empty Fundamental rows (store), to be filled by you,
+       the editor, or the "Isi dengan Claude" button;
+    4. copy the whole-market foreign-flow rows (Kode PASAR) the first time;
+    5. pull the prices, waiting for Google Finance to answer, and sync to Drive.
     """
     from .service import UserError  # local import: service imports nothing from here
 
     code = code.strip().upper()
     if not CODE_RE.match(code):
         raise UserError(f"'{code}' bukan kode saham BEI (empat huruf, mis. BBRI).")
-    cfg, cache, sheets = svc.cfg, svc.cache, svc.sheets
-    reg = registry(cfg, cache)
+    cfg, store, sheets = svc.cfg, svc.store, svc.sheets
+    reg = registry(cfg, store)
     if code in reg and reg[code]["legacy"]:
         raise UserError(f"{code} sudah punya halaman sendiri (sheet lama). Buka stock.html?tk={code}.")
     sector = sector if sector in SECTORS else "umum"
     peers = [p for p in (peers or []) if CODE_RE.match(p) and p != code][:5]
     warnings: list[str] = []
 
-    # 1. spreadsheet and tabs
+    ensure_tables(svc)
+
+    # 1. Daftar row
+    progress.step(f"Mendaftarkan {code}")
+    svc.upsert_many("saham_daftar", [[code, name.strip(), sector, ", ".join(peers), ""]], progress=progress, push=False)
+
+    # 2. price tabs for the stock and peers that have no page of their own
+    reg = registry(cfg, store)
+    need = [c for c in [code] + peers if not (c in reg and reg[c]["legacy"])]
     sid = cfg.spreadsheets.get(ALIAS, "")
+    new_tabs: list[str] = []
     if not sid:
-        progress.step("Membuat spreadsheet 'IEO Saham' di Google Drive Anda")
-        sid = sheets.create_spreadsheet("IEO Saham", list(TABS))
+        progress.step(f"Membuat spreadsheet '{FEED_TITLE}' (hanya rumus harga) di Google Drive Anda")
+        new_tabs = [price_tab(c) for c in need]
+        sid = sheets.create_spreadsheet(FEED_TITLE, new_tabs)
         save_local_spreadsheet(ALIAS, sid, local_path)
         cfg.set_spreadsheet(ALIAS, sid)
-        sheets.write_cells(sid, {f"'{t}'!{chr(65 + i)}1": h for t, hs in TABS.items() for i, h in enumerate(hs)})
-    tabs = sheets.tab_ids(sid)
-    missing_shared = [t for t in TABS if t not in tabs]
-    if missing_shared:
-        progress.step("Menambah tab: " + ", ".join(missing_shared))
-        sheets.add_tabs(sid, missing_shared)
-        sheets.write_cells(sid, {f"'{t}'!{chr(65 + i)}1": h for t in missing_shared for i, h in enumerate(TABS[t])})
-
-    # 2. Daftar row (the upsert also refreshes saham_daftar into the cache)
-    progress.step(f"Mendaftarkan {code}")
-    svc.upsert("saham_daftar", [code, name.strip(), sector, ", ".join(peers), ""], progress=progress)
-
-    # 3. price tabs for the stock and peers that have no page of their own
-    reg = registry(cfg, cache)
-    need = [c for c in [code] + peers if not (c in reg and reg[c]["legacy"])]
-    new_tabs = [price_tab(c) for c in need if price_tab(c) not in tabs]
+    else:
+        tabs = sheets.tab_ids(sid)
+        new_tabs = [price_tab(c) for c in need if price_tab(c) not in tabs]
+        if new_tabs:
+            progress.step("Menambah tab harga: " + ", ".join(new_tabs))
+            sheets.add_tabs(sid, new_tabs)
     if new_tabs:
-        progress.step("Menambah tab harga: " + ", ".join(new_tabs))
-        sheets.add_tabs(sid, new_tabs)
-        sheets.write_cells(sid, {f"'{price_tab(c)}'!A1": price_formula(c) for c in need if price_tab(c) in new_tabs})
+        sheets.write_cells(sid, {f"'{t}'!A1": price_formula(t[len('Harga '):]) for t in new_tabs})
 
-    # 4. Fundamental template rows for the stock (full) and peers (core keys)
-    fund_live = sheets.batch_get(sid, ["'Fundamental'!A2:F"])[0]
-    have = {(r[0].strip().upper(), r[1].strip()) for r in fund_live if len(r) > 1}
+    # 3. Fundamental template rows: the stock (full) and its peers (core keys)
+    have = {(r[0].strip().upper(), r[1].strip()) for r in _cache_rows(store, "saham_fund") if len(r) > 1}
     rows = []
     for c, full in [(code, True)] + [(p, False) for p in need if p != code]:
         p_sector = reg.get(c, {}).get("sector", sector)
@@ -292,37 +302,30 @@ def add_stock(svc, code: str, name: str = "", sector: str = "umum", peers: list[
                 rows.append([c, k, desc, "", unit, ""])
     if rows:
         progress.step(f"Menyiapkan {len(rows)} baris Fundamental kosong untuk diisi")
-        start = 2 + len(fund_live)
-        sheets.write_cells(sid, {f"'Fundamental'!{chr(65 + j)}{start + i}": v
-                                 for i, r in enumerate(rows) for j, v in enumerate(r) if v})
+        svc.upsert_many("saham_fund", rows, progress=progress, push=False)
 
-    # 5. whole-market flows, copied once from the oldest stock page's flow tab
-    flow_live = sheets.batch_get(sid, ["'Arus asing'!A2:I"])[0]
-    if not any(r and r[0].strip().upper() == MARKET for r in flow_live):
-        src = [r for r in _cache_rows(cache, "bmri_flow") if len(r) > 2 and not r[2].startswith(("stk_", "bmri_", "bbca_"))]
+    # 4. whole-market flows, copied once from the oldest stock page's flow data
+    if not any(r and r[0].strip().upper() == MARKET for r in _cache_rows(store, "saham_flow")):
+        src = [r for r in _cache_rows(store, "bmri_flow") if len(r) > 2 and not r[2].startswith(("stk_", "bmri_", "bbca_"))]
         if src:
             progress.step(f"Menyalin {len(src)} baris arus asing seluruh pasar (Kode {MARKET})")
-            start = 2 + len(flow_live)
-            sheets.write_cells(sid, {f"'Arus asing'!{chr(65 + j)}{start + i}": v
-                                     for i, r in enumerate(src) for j, v in enumerate([MARKET] + r[:8]) if v})
+            svc.upsert_many("saham_flow", [[MARKET] + r[:8] for r in src], progress=progress, push=False)
 
-    # 6. pull: shared tabs, then prices (GOOGLEFINANCE needs a few seconds)
-    with_stock_datasets(cfg, cache)
-    svc.refresh([v for v in SHARED_IDS.values() if v in cfg.datasets], progress=progress)
+    # 5. prices (GOOGLEFINANCE needs a few seconds), then one sync to Drive
+    with_stock_datasets(cfg, store)
     ids = [price_id(c) for c in need]
     for attempt in range(8):
         svc.refresh(ids, progress=progress)
-        pending = [c for c in need if not _has_prices(cache, price_id(c))]
-        if not pending:
-            break
-        if any(_price_error(cache, price_id(c)) for c in pending):
+        pending = [c for c in need if not _has_prices(store, price_id(c))]
+        if not pending or any(_price_error(store, price_id(c)) for c in pending):
             break
         progress.step("Menunggu Google Finance mengisi harga: " + ", ".join(pending))
         sleep(2 + attempt)
     for c in need:
-        if not _has_prices(cache, price_id(c)):
-            err = _price_error(cache, price_id(c))
+        if not _has_prices(store, price_id(c)):
+            err = _price_error(store, price_id(c))
             warnings.append(f"Harga {c} belum terbaca" + (f" ({err}): Google Finance mungkin tidak mengenal IDX:{c}." if err else "; coba ⟳ Tarik sebentar lagi."))
+    svc.sync_push(progress)
     for w in warnings:
         progress.warn(w)
     return {"code": code, "spreadsheet": sid, "price_tabs": new_tabs, "template_rows": len(rows), "warnings": warnings}

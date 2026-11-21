@@ -98,8 +98,16 @@
       const r = await fetch('/api/data?' + query, { cache: 'no-store' });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const j = await r.json();
+      // big static files (map shapes) come from their own, browser-cached URL
+      await Promise.all(Object.values(j.datasets).filter((d) => d.answer_url).map(async (d) => {
+        try {
+          const f = await fetch(d.answer_url);
+          if (!f.ok) throw new Error('HTTP ' + f.status);
+          d.answer = await f.json();
+        } catch (e) { d.status = 'error'; d.message = 'File gagal dimuat (' + e.message + ')'; }
+      }));
       sources = j.datasets; loadError = null;
-      window.EO_META = { sheet_url: j.sheet_url, google: j.google, datasets: j.datasets };
+      window.EO_META = { sheet_url: j.sheet_url, folder_url: j.folder_url, google: j.google, datasets: j.datasets };
       const n = Object.values(j.datasets).filter((d) => d.status === 'ok').length;
       phase('Menggambar grafik dari ' + n + ' dataset…');
     } catch (e) {

@@ -8,7 +8,7 @@ ranges, correlations, rankings, what is overdue) from the local cache and
 prints only the results. Claude then interprets; scripts/insights.py checks
 that every number Claude writes appears here.
 
-No network: it reads data/cache/ (pull from the Sheet first to be current).
+No network: it reads the local data store, data/store/ (pull first to be current).
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from backend.cache import Cache  # noqa: E402
+from backend.store import Store  # noqa: E402
 from backend.config import load_config  # noqa: E402
 from backend.service import Service, parse_number  # noqa: E402
 
@@ -85,7 +85,7 @@ def corr(a, b):
 
 def main() -> None:
     cfg = load_config()
-    cache = Cache()
+    cache = Store()
     rows = {k: (cache.get(k) or {}).get("values", []) for k in cfg.datasets if cfg.datasets[k].kind == "sheet"}
     meta = Service(cfg, cache, None).metadata()
     out: list[str] = []

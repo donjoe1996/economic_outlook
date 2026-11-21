@@ -7,8 +7,12 @@ Used by the stock-data Claude skill (.claude/skills/stock-data), and by hand:
         dividend and flow rows exist. Reads the local copy only.
 
     python scripts/stock_rows.py write data/stocks/BBRI.json [--dry-run]
-        Writes a draft to the Sheet: one read, one write and one refresh per
-        tab (see Service.upsert_many). --dry-run only prints what would change.
+        Saves a draft to the data store (one save per table, see
+        Service.upsert_many) and uploads the changed files to Google Drive.
+        --dry-run only prints what would change.
+
+The app does the same from the stock page: "Isi dengan Claude" proposes the
+rows, you review them, then Simpan (backend/ai.py).
 
 The draft file (data/ is not committed):
 
@@ -31,7 +35,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from backend import stocks  # noqa: E402
-from backend.cache import Cache  # noqa: E402
+from backend.store import Store as Cache  # noqa: E402
 from backend.config import load_config  # noqa: E402
 
 TABS = {"fund": "saham_fund", "fh": "saham_fh", "dv": "saham_dv", "flow": "saham_flow"}
@@ -114,14 +118,22 @@ def write(path: Path, dry_run: bool) -> int:
         def warn(self, t): print("!", t)
         def count(self, *a): pass
 
+    from backend.drive import GoogleDrive
+
     cache = Cache()
-    svc = Service(stocks.with_stock_datasets(load_config(), cache), cache, GoogleSheets())
+    google = GoogleSheets()
+    cfg = stocks.with_stock_datasets(load_config(), cache)
+    drive = GoogleDrive(google) if (cfg.drive_folder and google.status().get("drive")) else None
+    if drive is None:
+        print("! Google Drive belum terhubung: disimpan lokal saja, diunggah saat Tarik/Sinkron berikutnya.")
+    svc = Service(cfg, cache, google, drive)
     for ds_id, rows in blocks.items():
-        out = svc.upsert_many(ds_id, rows, progress=Print())
+        out = svc.upsert_many(ds_id, rows, progress=Print(), push=False)
         acts = {}
         for r in out["results"]:
             acts[r["action"]] = acts.get(r["action"], 0) + 1
         print(f"{ds_id}: {out['cells_written']} sel ditulis {acts}")
+    svc.sync_push(Print())
     return 0
 
 

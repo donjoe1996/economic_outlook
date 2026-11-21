@@ -308,3 +308,8 @@ dialog.adm-dlg::backdrop { background: rgba(0, 0, 0, .5); -webkit-backdrop-filte
   .t-stock-add { flex: none; margin: 0 8px 0 0; }
   .t-stock-add input { width: 110px; padding: 5px 8px; }
 }
+
+/* Insight panel: the Claude button */
+.eo-ci-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.eo-ci-go { border-color: var(--t-amber); color: var(--t-amber); font-weight: 600; white-space: nowrap; }
+.eo-ci-go:disabled { opacity: .7; }

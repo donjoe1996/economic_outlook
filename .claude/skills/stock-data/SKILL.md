@@ -1,11 +1,13 @@
 ---
 name: stock-data
-description: Research and fill an Indonesian stock's rows in the shared "IEO Saham" Google Sheet (fundamentals, year-end history, dividends, foreign flows) so its stock page (stock.html?tk=CODE) can show valuation and dividend analysis. Use when the user asks to fill, complete, update or research data for a stock code (e.g. "isi data saham BBRI", "lengkapi fundamental TLKM", "update dividen ADRO").
+description: Research and fill an Indonesian stock's rows in the app's data store (JSON in Google Drive; fundamentals, year-end history, dividends, foreign flows) so its stock page (stock.html?tk=CODE) can show valuation and dividend analysis. Use when the user asks to fill, complete, update or research data for a stock code (e.g. "isi data saham BBRI", "lengkapi fundamental TLKM", "update dividen ADRO").
 ---
 
-# Stock data (fill the Saham sheet from credible sources)
+# Stock data (fill the data store from credible sources)
 
-The page reads only the Sheet. Your job is to put **verified numbers with their source** into it. Never invent a number: a blank cell is honest, a guessed one is not.
+The same research also runs from the app: the **Isi dengan Claude** button on a stock's Valuasi or Dividen tab (backend/ai.py), which proposes rows for review. Use this skill when the user asks in Claude Code, or wants foreign-flow rows (the button does not research flows).
+
+The page reads only the data store (data/store/, mirrored to the Drive folder). Your job is to put **verified numbers with their source** into it. Never invent a number: a blank cell is honest, a guessed one is not.
 
 Python: `.venv/bin/python` (Windows: `.venv\Scripts\python`); if there's no `.venv`, use `python3`.
 
@@ -33,7 +35,7 @@ Python: `.venv/bin/python` (Windows: `.venv\Scripts\python`); if there's no `.ve
    - Every row carries its source. Fill the peers' core keys too if the user asked, with the same rules.
 5. **Check, then write:**
    - `<python> scripts/stock_rows.py write data/stocks/CODE.json --dry-run`: read the printout and fix units that look wrong (e.g. ROE 0.19, equity in billions).
-   - Then run it without `--dry-run`. This needs the app's Google sign-in.
+   - Then run it without `--dry-run`. It saves to data/store/ and uploads the changed files to Drive (needs the app's Google sign-in with Drive access; otherwise they upload on the next Tarik).
    - Rows are matched by key (Kode + Kunci / Tanggal / Jenis), so running it again updates instead of duplicating.
 6. **Reply in ≤ 6 lines:**
    - what you filled (counts per tab);

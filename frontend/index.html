@@ -26,13 +26,13 @@
   <span class="adm-grow t-status" id="adm-status">Memuat data…</span>
   <div class="t-actions">
     <button class="adm-btn primary" id="adm-login" hidden>Hubungkan Google</button>
-    <button class="adm-btn" id="adm-refresh" title="Baca ulang semua dataset dari Google Sheet ke salinan lokal">⟳ Tarik</button>
-    <button class="adm-btn" id="adm-add" title="Tambah periode baru atau isi sel kosong, langsung ke Google Sheet">＋ Data</button>
+    <button class="adm-btn" id="adm-refresh" title="Sinkron data dengan Google Drive dan ambil harga terbaru dari Sheet feed">⟳ Tarik</button>
+    <button class="adm-btn" id="adm-add" title="Tambah periode baru atau isi sel kosong; tersimpan ke Google Drive">＋ Data</button>
     <button class="adm-btn" id="adm-auto" title="Cek sumber resmi (FRED) untuk periode baru">Cek baru</button>
     <button class="adm-btn" id="adm-sources" title="Dari mana setiap angka berasal">Sumber</button>
     <button class="adm-btn" id="adm-activity" title="Apa yang sedang/telah dikerjakan aplikasi">Aktivitas</button>
     <a class="adm-btn" href="metadata.html" title="Dataset mana yang terbaru dan mana yang perlu diperbarui">Metadata</a>
-    <a class="adm-btn" id="adm-sheet" href="#" target="_blank" rel="noopener" title="Buka Google Sheet">Sheet ↗</a>
+    <a class="adm-btn" id="adm-sheet" href="#" target="_blank" rel="noopener" title="Folder data (file JSON) di Google Drive">Data ↗</a>
     <button class="adm-btn t-theme" id="t-theme" type="button" title="Tema gelap/terang" aria-label="Ganti tema">◐</button>
   </div>
 </div>
@@ -51,13 +51,13 @@
 
 <dialog class="adm-dlg" id="adm-form-dlg">
   <form id="adm-form">
-    <h2>Tambah / perbarui data di Google Sheet</h2>
+    <h2>Tambah / perbarui data</h2>
     <label class="adm-field"><span>Dataset</span><select id="adm-ds"></select></label>
     <p class="adm-help" id="adm-ds-help"></p>
     <div class="adm-fields" id="adm-fields"></div>
     <div class="adm-actions">
       <button type="button" class="adm-btn" data-close>Batal</button>
-      <button type="submit" class="adm-btn primary" id="adm-submit">Simpan ke Sheet</button>
+      <button type="submit" class="adm-btn primary" id="adm-submit">Simpan</button>
     </div>
   </form>
 </dialog>
@@ -65,7 +65,7 @@
 <dialog class="adm-dlg" id="adm-upd-dlg">
   <form id="adm-upd-form">
     <h2>Periode baru dari sumber resmi</h2>
-    <p class="adm-help">Centang baris yang mau ditulis ke Sheet. Tidak ada yang ditulis sebelum Anda menekan tombol.</p>
+    <p class="adm-help">Centang baris yang mau disimpan. Tidak ada yang ditulis sebelum Anda menekan tombol.</p>
     <div id="adm-upd"></div>
     <div class="adm-actions">
       <button type="button" class="adm-btn" data-close>Tutup</button>

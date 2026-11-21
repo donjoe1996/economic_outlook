@@ -17,8 +17,8 @@
   <a class="t-brand" href="index.html" title="Kembali ke dashboard"><span class="t-logo">IEO</span><span class="t-brand-name">Metadata</span></a>
   <a class="adm-btn" href="index.html">← Dashboard</a>
   <span class="adm-grow" id="md-asof">Memuat…</span>
-  <button class="adm-btn" id="md-refresh" title="Baca ulang semua dataset dari Google Sheet">Tarik semua dari Sheet</button>
-  <a class="adm-btn" id="md-sheet" href="#" target="_blank" rel="noopener">Sheet ↗</a>
+  <button class="adm-btn" id="md-refresh" title="Sinkron dengan Google Drive dan ambil harga terbaru dari Sheet feed">⟳ Tarik</button>
+  <a class="adm-btn" id="md-sheet" href="#" target="_blank" rel="noopener" title="Folder data (file JSON) di Google Drive">Data di Drive ↗</a>
   <button class="adm-btn t-theme" id="t-theme" type="button" title="Tema gelap/terang" aria-label="Ganti tema">◐</button>
 </div>
 <!-- the progress panel is inserted here by js/jobs-ui.js -->
@@ -27,10 +27,13 @@
 <main class="md">
   <h1 class="md-title">Metadata data</h1>
   <p class="md-sub">
-    Untuk tiap dataset: periode terbaru yang ada di Sheet, periode yang <em>seharusnya</em> sudah rilis menurut jadwal penerbitnya,
-    sel yang masih kosong, dan hasil penarikan terakhir. Jadwal rilis (frekuensi dan jeda publikasi) diatur di
+    Untuk tiap dataset: periode terbaru yang tersimpan, periode yang <em>seharusnya</em> sudah rilis menurut jadwal penerbitnya,
+    sel yang masih kosong, dan hasil penarikan terakhir. Data disimpan sebagai file JSON di folder Google Drive Anda;
+    ubah lewat tombol <b>Edit tabel</b>. Harga (rumus GOOGLEFINANCE) tetap dari Google Sheet dan hanya-baca di sini. Jadwal rilis (frekuensi dan jeda publikasi) diatur di
     <code>config/datasets.yaml</code>. Angkanya perkiraan, jadi cocokkan dengan kalender rilis BPS, BI, dan OJK.
   </p>
+
+  <section class="md-store" id="md-store" aria-label="Penyimpanan data"></section>
 
   <section class="md-tiles" id="md-tiles" aria-label="Ringkasan"></section>
 
@@ -58,6 +61,7 @@
 <div class="adm-toast" id="adm-toast" role="status" aria-live="polite"></div>
 
 <script src="js/jobs-ui.js"></script>
+<script src="js/table-editor.js"></script>
 <script src="js/metadata.js"></script>
 <script src="js/terminal.js"></script>
 </body>

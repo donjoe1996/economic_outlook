@@ -106,6 +106,18 @@ def check(doc: dict, facts: str) -> dict:
     return {"numbers": total, "unmatched": unmatched, "problems": problems}
 
 
+def publish(doc: dict, res: dict, by: str = "Claude Code (skill economic-insights)") -> Path:
+    """Write a checked draft as data/insights/latest.json plus a dated copy."""
+    doc["generated_at"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    doc["generated_by"] = by
+    doc["check"] = {"numbers": res["numbers"], "unmatched": 0, "method": "setiap angka dicocokkan dengan scripts/digest.py"}
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    latest = OUT_DIR / "latest.json"
+    latest.write_text(json.dumps(doc, ensure_ascii=False, indent=1), encoding="utf-8")
+    shutil.copy(latest, OUT_DIR / f"{doc['generated_at'][:10]}.json")
+    return latest
+
+
 def main() -> None:
     if len(sys.argv) != 3 or sys.argv[1] not in ("check", "publish"):
         sys.exit(__doc__)
@@ -121,12 +133,7 @@ def main() -> None:
     if sys.argv[1] == "publish":
         if bad:
             sys.exit("Tidak dipublikasikan: perbaiki dulu.")
-        doc["generated_at"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-        doc["check"] = {"numbers": res["numbers"], "unmatched": 0, "method": "setiap angka dicocokkan dengan scripts/digest.py"}
-        OUT_DIR.mkdir(parents=True, exist_ok=True)
-        latest = OUT_DIR / "latest.json"
-        latest.write_text(json.dumps(doc, ensure_ascii=False, indent=1), encoding="utf-8")
-        shutil.copy(latest, OUT_DIR / f"{doc['generated_at'][:10]}.json")
+        latest = publish(doc, res)
         print(f"Dipublikasikan: {latest.relative_to(ROOT)} (tampil di dashboard setelah halaman dimuat ulang)")
     sys.exit(1 if bad else 0)
 

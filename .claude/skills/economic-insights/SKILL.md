@@ -5,7 +5,9 @@ description: Write the dashboard's "Insight dari Claude" panel, a short data rea
 
 # Economic insights (token-lean)
 
-Never read `data/cache/*.json` or the dashboard code. All numbers come from one compact fact sheet.
+The dashboard's **✦ Buat insight / Perbarui insight** button does the same thing through the Claude API (backend/ai.py, same rules, same number check). Use this skill when the user asks in Claude Code.
+
+Never read `data/store/*.json` or the dashboard code. All numbers come from one compact fact sheet.
 
 Python: `.venv/bin/python` (Windows: `.venv\Scripts\python`); if there's no `.venv`, use `python3`.
 

@@ -60,16 +60,16 @@
     const g = m.google || {};
     const ds = m.datasets || {};
     const times = Object.values(ds).map((d) => d.fetched_at).filter(Boolean).sort();
-    const srcs = new Set(Object.values(ds).map((d) => d.source).filter(Boolean));
-    const from = srcs.has('sheet') ? 'Google Sheet' : srcs.has('xlsx-import') ? 'salinan .xlsx' : '–';
     $('#adm-status').textContent = times.length
-      ? 'Data lokal dari ' + from + ', terakhir ditarik ' + fmtTime(times[times.length - 1])
-      : 'Belum ada data lokal. Hubungkan Google lalu klik "Tarik dari Sheet" (atau impor .xlsx, lihat README).';
+      ? 'Data: file JSON di Google Drive (salinan lokal), terakhir diperbarui ' + fmtTime(times[times.length - 1])
+      : 'Belum ada data lokal. Hubungkan Google lalu klik "Tarik".';
     const gs = $('#adm-google');
-    gs.textContent = g.signed_in ? 'Google: terhubung' : (g.has_credentials_file ? 'Google: belum masuk' : 'Google: belum disiapkan');
-    gs.className = 'adm-pill ' + (g.signed_in ? 'ok' : 'warn');
-    $('#adm-login').hidden = !!g.signed_in;
-    if (m.sheet_url) $('#adm-sheet').href = m.sheet_url;
+    const ok = g.signed_in && g.drive;
+    gs.textContent = ok ? 'Google: terhubung' : g.signed_in ? 'Google: perlu izin Drive' : (g.has_credentials_file ? 'Google: belum masuk' : 'Google: belum disiapkan');
+    gs.title = g.signed_in && !g.drive ? 'Data kini disimpan di Google Drive. Klik Hubungkan Google sekali lagi dan setujui akses Drive.' : '';
+    gs.className = 'adm-pill ' + (ok ? 'ok' : 'warn');
+    $('#adm-login').hidden = !!ok;
+    if (m.folder_url) $('#adm-sheet').href = m.folder_url;
   }
   window.addEventListener('eo:data', renderStatus);
   // Page-load phases reported by dash-shim.js
@@ -80,7 +80,7 @@
     try {
       const out = await runJob('/api/auth/login');
       await dash.reload();
-      report('Terhubung ke Google. ' + Object.keys(out.result.rows).length + ' dataset ditarik.', out);
+      report('Terhubung ke Google. Data disinkron dengan Drive, ' + Object.keys(out.result.rows || {}).length + ' feed harga ditarik.', out);
     } catch (err) { toast(err.message, 'bad'); }
   }
 
@@ -88,7 +88,7 @@
     try {
       const out = await runJob('/api/refresh');
       await dash.reload();
-      report(Object.keys(out.result.rows).length + ' dataset ditarik dari Google Sheet.', out);
+      report('Data disinkron dengan Drive, ' + Object.keys(out.result.rows || {}).length + ' feed harga ditarik.', out);
     } catch (err) { toast(err.message, 'bad'); }
   }
 
@@ -98,7 +98,7 @@
   async function openForm(preselect) {
     try { described = await api('GET', '/api/datasets'); } catch (err) { toast(err.message, 'bad'); return; }
     const sel = $('#adm-ds');
-    sel.replaceChildren(...described.filter((d) => d.write === 'append' || d.write === 'fill')
+    sel.replaceChildren(...described.filter((d) => d.editable)
       .map((d) => el('option', { value: d.id, text: d.title + (d.write === 'fill' ? ' (isi baris yang ada)' : '') })));
     if (typeof preselect === 'string' && described.some((d) => d.id === preselect)) sel.value = preselect;
     buildFields();
@@ -117,7 +117,7 @@
       el('tr', {}, d.columns.map((c) => el('th', { text: c.name }))),
       ...d.last_rows.map((r) => el('tr', {}, r.map((v) => el('td', { text: v })))),
     ]);
-    box.appendChild(el('div', { class: 'adm-scroll' }, [el('div', { class: 'adm-cap', text: 'Baris terakhir di Sheet' }), t]));
+    box.appendChild(el('div', { class: 'adm-scroll' }, [el('div', { class: 'adm-cap', text: 'Baris terakhir' }), t]));
 
     d.columns.forEach((c) => {
       const listId = 'adm-dl-' + c.index;
@@ -131,7 +131,7 @@
         c.suggestions.length ? el('datalist', { id: listId }, c.suggestions.map((s) => el('option', { value: s }))) : null,
       ]));
     });
-    box.appendChild(el('p', { class: 'adm-help', text: 'Kolom kosong tidak ditulis, jadi rumus dan catatan yang sudah ada di Sheet tetap aman. Kalau periodenya sudah ada, hanya sel yang Anda isi yang diperbarui.' }));
+    box.appendChild(el('p', { class: 'adm-help', text: 'Kolom kosong tidak diubah. Kalau periodenya sudah ada, hanya sel yang Anda isi yang diperbarui. Kolom hitungan (mis. selisih) dihitung otomatis. Untuk menghapus atau merapikan baris, pakai Edit tabel di halaman Metadata.' }));
   }
 
   async function submitForm(e) {
@@ -144,7 +144,7 @@
       const out = await runJob('/api/datasets/' + encodeURIComponent(d.id) + '/rows', { values });
       const r = out.result;
       const what = { append: 'Baris baru ditambahkan', update: 'Baris diperbarui', unchanged: 'Tidak ada yang berubah' }[r.action];
-      report(what + ' (baris ' + r.sheet_row + ' di Sheet, ' + r.cells_written + ' sel).', out);
+      report(what + ' (baris ' + r.sheet_row + ', ' + r.cells_written + ' sel, disimpan ke Drive).', out);
       await dash.reload();
     } catch (err) {
       toast(err.message, 'bad');
@@ -190,7 +190,7 @@
         n += out.result.results.filter((x) => x.action !== 'failed').length;
         skipped = skipped.concat(out.warnings);
       }
-      report(n + ' baris ditulis ke Sheet.', { warnings: skipped });
+      report(n + ' baris disimpan.', { warnings: skipped });
       await dash.reload();
     } catch (err) { toast(err.message, 'bad'); }
   }
