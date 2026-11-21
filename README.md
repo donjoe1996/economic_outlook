@@ -126,6 +126,7 @@ local folder (e.g. `~/Projects/economic_outlook`) is safer.
 | **Cek data baru otomatis** | Asks the official sources (FRED for now) for periods newer than the Sheet's. Shows them first and writes only the rows you tick |
 | **Sumber data** | Every dataset, its range, its write mode, and when it was pulled |
 | **Aktivitas** | Recent jobs with every step and how long it took |
+| **Metadata** | Opens the Metadata page (below) |
 
 Slow actions run as **background jobs** on the server (`backend/jobs.py`).
 The page shows a progress bar under the toolbar: the current step, how many
@@ -144,6 +145,89 @@ Each dataset has a **write mode** in `datasets.yaml`:
 
 The app writes only the cells you filled in, one by one. A formula in another
 column of the same row (e.g. column H in the SBN table) is never overwritten.
+
+## Metadata page: what is current, what needs updating
+
+`metadata.html` (toolbar: **Metadata**) lists every dataset with:
+
+- the **newest period in your Sheet** vs the **newest period that should be
+  published by now**;
+- **blank periods** (e.g. Apr'26 foreign flow);
+- when its content **last changed**, when it was **last pulled**, and whether
+  the last pull or automatic check **failed**;
+- links to the exact Sheet tab and to the publisher's release page.
+
+The idea behind "should be published by now": a figure for period P can only
+exist after P ends *and* the publisher has had time to release it. So each
+dataset has a `frequency` and a `lag_days` in `config/datasets.yaml`:
+
+> expected = newest P with end(P) + lag_days ≤ today
+
+Irregular data (yields quoted on random dates) uses `stale_after_days`
+instead; one-off tables are marked as snapshots. **The lags are approximate
+assumptions:** check them against the BPS, BI and OJK release calendars and
+adjust them in the YAML.
+
+## When something fails
+
+One failing source must not sink the whole run:
+
+| Failure | What the app does |
+|---|---|
+| Timeout, dropped connection, 429/5xx | Retries 3 times, waiting 1 s, then 2 s |
+| Bad input, missing permission | Stops at once (retrying can't help) |
+| One tab in a batch keeps failing | Tries the batch's datasets one by one, so the neighbours still load |
+| A dataset still fails | Keeps its **previous copy** and records the error on the Metadata page |
+| Result | The job ends **"Selesai dengan N peringatan"** (done with N warnings): amber bar plus the list of what was skipped |
+
+**FRED timeouts.** FRED's CSV download (used without a key) can be slow or
+throttled for scripts. The official API is more reliable:
+
+1. Get a free key at https://fred.stlouisfed.org/docs/api/api_key.html.
+2. Save it as `secrets/fred_api_key.txt` (one line), or set the environment
+   variable `FRED_API_KEY`.
+
+With a key, the app uses the API first and falls back to the CSV download.
+
+## Stock markets: IHSG vs Asia and IHSG vs Global
+
+Both map views come from tabs with `GOOGLEFINANCE` formulas, filled with
+each month's last close. **Saham Global** holds S&P 500 (New York),
+FTSE 100 (London), DAX (Frankfurt), CAC 40 (Paris), Nikkei 225 (Tokyo),
+Hang Seng, CSI 300 (Shanghai + Shenzhen), and the USD ETFs URTH (MSCI World)
+and EIDO (Indonesia in dollars). To add a month, copy the last formula row
+down; the open-ended range picks it up.
+
+The views share one implementation (`EO_MKT` in `01-core.js`). A new view,
+say "IHSG vs Emerging", is one more entry: a country list, a dataset, a zoom
+box and a benchmark.
+
+Things to keep in mind when reading it:
+
+- Indices are in local currency, the ETFs in USD.
+- DAX counts dividends (total return); the others don't.
+- CSI 300 has no Okt'25 close in Google Finance, so it's measured from
+  Nov'25 and marked with "*".
+
+## Insights written by Claude (project skill)
+
+`.claude/skills/economic-insights/` is a project-level Claude Code skill.
+In Claude Code, inside this folder, ask for example *"buat insight dari data
+dashboard"* ("write insights from the dashboard data"). The skill:
+
+1. runs `scripts/digest.py`, a ~60-line fact sheet (about 2k tokens) with
+   every number precomputed: levels, changes, ranges, correlations, rankings,
+   overdue data. Claude never reads the raw tables;
+2. writes 6–8 short insights (world → US → Indonesia → money → markets →
+   credit → banks) into `data/insights/draft.json`;
+3. runs `scripts/insights.py check`, which confirms that **every number in
+   the text appears in the fact sheet** (allowing rounding and Indonesian
+   number style). An invented number blocks publishing;
+4. publishes to `data/insights/latest.json`, shown in the dashboard's
+   **Insight dari Claude** panel.
+
+The split is deliberate: Python does the arithmetic (exact and cheap), and
+Claude does the interpretation (what matters, what connects).
 
 ## Adding a new indicator
 
@@ -188,7 +272,9 @@ Kepulauan Riau, and NTT.
 .venv/bin/python -m pytest -q
 ```
 
-The tests use a fake in-memory Sheet, so they never touch your real one.
+They cover the write path, the freshness rules, the retry/skip behaviour,
+and the insights number check. They use a fake in-memory Sheet, so they never
+touch your real one.
 
 ## Known limits, worth thinking about
 

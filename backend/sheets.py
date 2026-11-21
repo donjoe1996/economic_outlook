@@ -123,6 +123,11 @@ class GoogleSheets:
         )
         return [vr.get("values", []) for vr in resp.get("valueRanges", [])]
 
+    def tab_ids(self, spreadsheet_id: str) -> dict[str, int]:
+        """Tab name -> numeric id, for links like .../edit#gid=<id>."""
+        resp = self._svc().spreadsheets().get(spreadsheetId=spreadsheet_id, fields="sheets.properties(sheetId,title)").execute()
+        return {s["properties"]["title"]: s["properties"]["sheetId"] for s in resp.get("sheets", [])}
+
     def write_cells(self, spreadsheet_id: str, cells: dict[str, str]) -> None:
         if not cells:
             return

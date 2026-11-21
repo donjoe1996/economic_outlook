@@ -25,17 +25,7 @@
     return n;
   }
 
-  async function api(method, path, body) {
-    const r = await fetch(path, {
-      method,
-      headers: body ? { 'Content-Type': 'application/json' } : {},
-      body: body ? JSON.stringify(body) : undefined,
-      cache: 'no-store',
-    });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.detail || ('HTTP ' + r.status));
-    return j;
-  }
+  const api = EOJobs.api;
 
   function toast(msg, kind) {
     const t = $('#adm-toast');
@@ -49,65 +39,19 @@
     if (!iso) return '–';
     return new Date(iso).toLocaleString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   }
-  const secs = (s) => (s < 60 ? s.toFixed(1) + ' dtk' : Math.floor(s / 60) + ' mnt ' + Math.round(s % 60) + ' dtk');
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const secs = EOJobs.secs;
 
-  // ------------------------------------------------------------ progress panel
-  let activeJob = null;
-
+  // ------------------------------------------------------------ jobs (js/jobs-ui.js)
   function setBusy(on) {
-    ACTION_BUTTONS.forEach((s) => { const b = $(s); if (b) b.disabled = on; });
+    ACTION_BUTTONS.forEach((sel) => { const b = $(sel); if (b) b.disabled = on; });
   }
+  EOJobs.onBusy(setBusy);
+  const runJob = EOJobs.run;
 
-  function drawProgress(job) {
-    const box = $('#adm-prog');
-    box.hidden = false;
-    box.className = 'adm-prog ' + job.state;
-    $('#adm-prog-title').textContent = job.title;
-    $('#adm-prog-now').textContent = job.state === 'error' ? job.error : job.current;
-    const count = job.total ? job.done + '/' + job.total + ' · ' : '';
-    $('#adm-prog-meta').textContent = count + secs(job.elapsed);
-    const bar = $('#adm-prog-bar');
-    const known = job.total > 0;
-    bar.classList.toggle('indeterminate', job.state === 'running' && !known);
-    bar.style.width = job.state !== 'running' ? '100%' : known ? Math.max(4, 100 * job.done / job.total) + '%' : '35%';
-    $('#adm-prog-steps').replaceChildren(...job.steps.map((s) => el('li', { class: s.open ? 'open' : '' }, [
-      el('span', { text: s.text }), el('small', { text: s.open && job.state === 'running' ? 'berjalan… ' + secs(s.seconds) : secs(s.seconds) }),
-    ])));
-  }
-
-  // Start a job (POST) and follow it to the end. Resolves with its result.
-  async function runJob(path, body) {
-    setBusy(true);
-    try {
-      let job = await api('POST', path, body || {});
-      activeJob = job.id;
-      drawProgress(job);
-      while (job.state === 'running') {
-        await sleep(400);
-        job = await api('GET', '/api/jobs/' + job.id);
-        drawProgress(job);
-      }
-      if (job.state === 'error') throw new Error(job.error);
-      setTimeout(() => { if (activeJob === job.id) $('#adm-prog').hidden = true; }, 4000);
-      return job.result;
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  // If a job is still running (e.g. the page was reloaded mid-pull), follow it.
-  async function resumeRunning() {
-    try {
-      const running = (await api('GET', '/api/jobs')).find((j) => j.state === 'running');
-      if (!running) return;
-      setBusy(true);
-      let job = running;
-      while (job.state === 'running') { drawProgress(job); await sleep(400); job = await api('GET', '/api/jobs/' + job.id); }
-      drawProgress(job);
-      setBusy(false);
-      if (job.state === 'done') await dash.reload();
-    } catch (e) { setBusy(false); }
+  // Success, or success with skipped parts: say which, don't pretend all went well.
+  function report(okText, out) {
+    if (out.warnings && out.warnings.length) toast(okText + ' ' + out.warnings.length + ' bagian dilewati (lihat panel).', 'warn');
+    else toast(okText, 'ok');
   }
 
   // ------------------------------------------------------------ status line
@@ -134,28 +78,29 @@
   // ------------------------------------------------------------ actions
   async function login() {
     try {
-      const r = await runJob('/api/auth/login');
+      const out = await runJob('/api/auth/login');
       await dash.reload();
-      toast('Terhubung ke Google. ' + Object.keys(r.rows).length + ' dataset ditarik.', 'ok');
+      report('Terhubung ke Google. ' + Object.keys(out.result.rows).length + ' dataset ditarik.', out);
     } catch (err) { toast(err.message, 'bad'); }
   }
 
   async function refresh() {
     try {
-      const r = await runJob('/api/refresh');
+      const out = await runJob('/api/refresh');
       await dash.reload();
-      toast(Object.keys(r.rows).length + ' dataset ditarik dari Google Sheet.', 'ok');
+      report(Object.keys(out.result.rows).length + ' dataset ditarik dari Google Sheet.', out);
     } catch (err) { toast(err.message, 'bad'); }
   }
 
   // ------------------------------------------------------------ add / update row
   let described = [];
 
-  async function openForm() {
+  async function openForm(preselect) {
     try { described = await api('GET', '/api/datasets'); } catch (err) { toast(err.message, 'bad'); return; }
     const sel = $('#adm-ds');
     sel.replaceChildren(...described.filter((d) => d.write === 'append' || d.write === 'fill')
       .map((d) => el('option', { value: d.id, text: d.title + (d.write === 'fill' ? ' (isi baris yang ada)' : '') })));
+    if (typeof preselect === 'string' && described.some((d) => d.id === preselect)) sel.value = preselect;
     buildFields();
     $('#adm-form-dlg').showModal();
   }
@@ -196,9 +141,10 @@
     const values = d.columns.map((c) => form.elements['c' + c.index].value);
     $('#adm-form-dlg').close();
     try {
-      const r = await runJob('/api/datasets/' + encodeURIComponent(d.id) + '/rows', { values });
+      const out = await runJob('/api/datasets/' + encodeURIComponent(d.id) + '/rows', { values });
+      const r = out.result;
       const what = { append: 'Baris baru ditambahkan', update: 'Baris diperbarui', unchanged: 'Tidak ada yang berubah' }[r.action];
-      toast(what + ' (baris ' + r.sheet_row + ' di Sheet, ' + r.cells_written + ' sel).', 'ok');
+      report(what + ' (baris ' + r.sheet_row + ' di Sheet, ' + r.cells_written + ' sel).', out);
       await dash.reload();
     } catch (err) {
       toast(err.message, 'bad');
@@ -210,7 +156,8 @@
   let preview = {};
 
   async function openUpdaters() {
-    try { preview = await runJob('/api/updaters/preview'); } catch (err) { toast(err.message, 'bad'); return; }
+    // A failing source is shown inside the dialog; the other sources still work.
+    try { preview = (await runJob('/api/updaters/preview')).result; } catch (err) { toast(err.message, 'bad'); return; }
     const box = $('#adm-upd');
     box.replaceChildren();
     for (const [id, p] of Object.entries(preview)) {
@@ -237,9 +184,13 @@
     });
     $('#adm-upd-dlg').close();
     try {
-      let n = 0;
-      for (const [ds, rows] of Object.entries(picked)) { const r = await runJob('/api/updaters/apply', { dataset: ds, rows }); n += r.results.length; }
-      toast(n + ' baris ditulis ke Sheet.', 'ok');
+      let n = 0, skipped = [];
+      for (const [ds, rows] of Object.entries(picked)) {
+        const out = await runJob('/api/updaters/apply', { dataset: ds, rows });
+        n += out.result.results.filter((x) => x.action !== 'failed').length;
+        skipped = skipped.concat(out.warnings);
+      }
+      report(n + ' baris ditulis ke Sheet.', { warnings: skipped });
       await dash.reload();
     } catch (err) { toast(err.message, 'bad'); }
   }
@@ -248,10 +199,11 @@
   async function openActivity() {
     let list = [];
     try { list = await api('GET', '/api/jobs'); } catch (err) { toast(err.message, 'bad'); return; }
-    const label = { running: 'berjalan', done: 'selesai', error: 'gagal' };
+    const label = { running: 'berjalan', done: 'selesai', partial: 'selesai dengan peringatan', error: 'gagal' };
     $('#adm-act').replaceChildren(...(list.length ? list.map((j) => el('details', { class: 'adm-act-job ' + j.state, open: j === list[0] }, [
       el('summary', {}, [el('b', { text: j.title }), ' · ', el('span', { text: label[j.state] + ' · ' + secs(j.elapsed) })]),
       j.error ? el('p', { class: 'adm-bad', text: j.error }) : null,
+      j.warnings.length ? el('ul', { class: 'adm-warn' }, j.warnings.map((w) => el('li', { text: w }))) : null,
       el('ol', { class: 'adm-steps' }, j.steps.map((s) => el('li', {}, [el('span', { text: s.text }), el('small', { text: secs(s.seconds) })]))),
     ])) : [el('p', { class: 'adm-help', text: 'Belum ada aktivitas sejak server dimulai.' })]));
     $('#adm-act-dlg').showModal();
@@ -278,19 +230,17 @@
   document.addEventListener('DOMContentLoaded', () => {
     $('#adm-login').addEventListener('click', login);
     $('#adm-refresh').addEventListener('click', refresh);
-    $('#adm-add').addEventListener('click', openForm);
+    $('#adm-add').addEventListener('click', () => openForm());
+    // index.html#add=<dataset id> (from the Metadata page) opens the form for that dataset
+    const deep = location.hash.match(/^#add=([A-Za-z0-9_-]+)$/);
+    if (deep) { history.replaceState(null, '', location.pathname); openForm(deep[1]); }
     $('#adm-ds').addEventListener('change', buildFields);
     $('#adm-form').addEventListener('submit', submitForm);
     $('#adm-auto').addEventListener('click', openUpdaters);
     $('#adm-upd-form').addEventListener('submit', applyUpdaters);
     $('#adm-sources').addEventListener('click', openSources);
     $('#adm-activity').addEventListener('click', openActivity);
-    $('#adm-prog-toggle').addEventListener('click', () => {
-      const s = $('#adm-prog-steps'); s.hidden = !s.hidden;
-      $('#adm-prog-toggle').textContent = s.hidden ? 'Rincian' : 'Sembunyikan';
-    });
-    $('#adm-prog-close').addEventListener('click', () => { $('#adm-prog').hidden = true; });
     document.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', () => b.closest('dialog').close()));
-    resumeRunning();
+    EOJobs.resume(() => dash.reload());
   });
 })();

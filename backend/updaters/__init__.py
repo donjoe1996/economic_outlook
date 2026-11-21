@@ -22,7 +22,12 @@ REGISTRY: dict[str, Callable] = {
 }
 
 
-def http_get(url: str, timeout: float = 30) -> str:
-    req = urllib.request.Request(url, headers={"User-Agent": "economic-outlook-local/1.0"})
+def http_get(url: str, timeout: float = 60) -> str:
+    # Standard "compatible" form, still naming this app honestly; some servers
+    # stall requests whose User-Agent doesn't follow the usual format.
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "Mozilla/5.0 (compatible; economic-outlook-local/1.0)",
+        "Accept": "text/csv,application/json;q=0.9,*/*;q=0.8",
+    })
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.read().decode("utf-8")

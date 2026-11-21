@@ -11,7 +11,18 @@
  */
 (function () {
   // dashboard key -> ISO 3166-1 numeric id used by Natural Earth / world-atlas
-  const ISO_NUM = { us: '840', id: '360', th: '764', vn: '704', kr: '410', in: '356', au: '036', cn: '156', tw: '158', ph: '608', my: '458', jp: '392' };
+  const ISO_NUM = { us: '840', id: '360', th: '764', vn: '704', kr: '410', in: '356', au: '036', cn: '156', tw: '158', ph: '608', my: '458', jp: '392', gb: '826', de: '276', fr: '250' };
+  // Keep only the parts of a country that belong to its stock market's story.
+  // Natural Earth's France includes French Guiana and Indian Ocean islands;
+  // colouring those as "CAC 40" would mislead, so keep mainland + Corsica.
+  const KEEP_BOX = { fr: [[-6, 41], [10, 52]] };
+  function keepParts(key, geometry) {
+    const box = KEEP_BOX[key];
+    if (!box || geometry.type !== 'MultiPolygon') return geometry;
+    const inside = (c) => c[0] >= box[0][0] && c[0] <= box[1][0] && c[1] >= box[0][1] && c[1] <= box[1][1];
+    const parts = geometry.coordinates.filter((poly) => inside(d3.geoCentroid({ type: 'Polygon', coordinates: poly })));
+    return { type: 'MultiPolygon', coordinates: parts };
+  }
   const KEY_OF = Object.fromEntries(Object.entries(ISO_NUM).map(([k, v]) => [v, k]));
 
   let memoFor = null, memo = null;
@@ -30,7 +41,7 @@
       // the 12 markets the dashboard compares, keyed like the rest of the code
       ctry: {
         type: 'FeatureCollection',
-        features: countries.features.filter((f) => KEY_OF[f.id]).map((f) => ({ type: 'Feature', properties: { i: KEY_OF[f.id], name: f.properties.name }, geometry: f.geometry })),
+        features: countries.features.filter((f) => KEY_OF[f.id]).map((f) => ({ type: 'Feature', properties: { i: KEY_OF[f.id], name: f.properties.name }, geometry: keepParts(KEY_OF[f.id], f.geometry) })),
       },
       provinces,
       byBps: Object.fromEntries(provinces.features.map((f) => [f.properties.bps, f])),

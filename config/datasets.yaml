@@ -18,6 +18,16 @@
 #           Usually the period. A list makes a composite key.
 #   updater Optional automatic fetcher (see backend/updaters/).
 #
+# Publishing schedule (for the Metadata page, backend/freshness.py):
+#   frequency         monthly | quarterly | irregular | snapshot | static
+#   lag_days          days after a period ends until it is usually published.
+#                     ASSUMPTIONS: approximate, check them against the
+#                     publisher's release calendar (BPS, BI, OJK, ...).
+#   stale_after_days  for irregular data: older than this = needs an update
+#   period_col        column holding the period/date (default: the key column)
+#   value_col         column whose blanks count as missing data (default 1)
+#   release, release_url, note   shown on the Metadata page
+#
 # Adding an indicator = add an entry here + a loader in
 # frontend/js/data/loaders.js + a drawing in frontend/js/sections/.
 # ---------------------------------------------------------------------------
@@ -31,36 +41,60 @@ datasets:
     title: PMI Manufaktur bulanan
     description: PMI Manufaktur Indonesia (S&P Global), dengan penerbit, URL sumber, dan tingkat kepercayaan per baris.
     range: "PMI!A2:G"
+    frequency: "monthly"
+    lag_days: 3
+    release: "S&P Global, hari kerja pertama bulan berikutnya"
+    release_url: "https://www.pmi.spglobal.com/Public/Release/PressReleases"
     write: append
 
   gdp:
     title: PDB riil YoY kuartalan
     description: Pertumbuhan PDB riil Indonesia YoY (BPS), dengan penerbit, URL sumber, dan tingkat kepercayaan per baris.
     range: "PDB!A2:G"
+    frequency: "quarterly"
+    lag_days: 40
+    release: "BPS, awal bulan kedua setelah kuartal berakhir"
+    release_url: "https://www.bps.go.id/id/pressrelease"
     write: append
 
   retail:
     title: Penjualan ritel YoY bulanan
     description: Pertumbuhan Indeks Penjualan Riil YoY (BI), dengan penerbit, URL sumber, dan tingkat kepercayaan per baris.
     range: "'Penjualan Ritel'!A2:G"
+    frequency: "monthly"
+    lag_days: 14
+    release: "BI Survei Penjualan Eceran, sekitar pertengahan bulan berikutnya"
+    release_url: "https://www.bi.go.id/id/publikasi/ruang-media/news-release/default.aspx"
     write: append
 
   ikk:
     title: Indeks Keyakinan Konsumen bulanan
     description: Indeks Keyakinan Konsumen (BI), dengan penerbit, URL sumber, dan tingkat kepercayaan per baris.
     range: "'Keyakinan Konsumen'!A2:G"
+    frequency: "monthly"
+    lag_days: 12
+    release: "BI Survei Konsumen, sekitar pekan kedua bulan berikutnya"
+    release_url: "https://www.bi.go.id/id/publikasi/ruang-media/news-release/default.aspx"
     write: append
 
   birate:
     title: BI Rate bulanan
     description: Suku bunga acuan Bank Indonesia, dengan penerbit, URL sumber, dan tingkat kepercayaan per baris.
     range: "'BI Rate'!A2:G"
+    frequency: "monthly"
+    lag_days: 1
+    release: "BI, Rapat Dewan Gubernur bulanan; posisi akhir bulan"
+    release_url: "https://www.bi.go.id/id/publikasi/ruang-media/news-release/default.aspx"
     write: append
 
   inflation:
     title: Inflasi YoY bulanan
     description: Inflasi tahunan Indonesia (BPS), dengan penerbit, URL sumber, dan tingkat kepercayaan per baris.
     range: "Inflasi!A2:G"
+    frequency: "monthly"
+    lag_days: 3
+    release: "BPS, hari kerja pertama bulan berikutnya"
+    release_url: "https://www.bps.go.id/id/pressrelease"
     write: append
 
   # Row 14 of the Rupiah tab is a partial month (a daily rate, not an average),
@@ -69,6 +103,10 @@ datasets:
     title: Kurs USD/IDR bulanan
     description: Kurs Rupiah per dolar AS, rata-rata bulanan (Google Finance), dengan penerbit, URL sumber, dan tingkat kepercayaan per baris.
     range: "Rupiah!A2:G13"
+    frequency: "monthly"
+    lag_days: 1
+    release: "Rumus GOOGLEFINANCE di Sheet; rata-rata tersedia saat bulan berakhir"
+    note: "Range tetap (A2:G13): perlebar range di config setelah baris bulan baru lengkap."
     write: fill
 
   # ---------------- Foreign money (several tables stacked in one tab) --------
@@ -76,18 +114,30 @@ datasets:
     title: Arus asing di saham bulanan
     description: Net beli/jual investor asing di saham (OJK), Rp triliun per bulan. Apr'26 masih kosong.
     range: "'Arus Modal Asing'!A17:G28"
+    frequency: "monthly"
+    lag_days: 10
+    release: "OJK, konferensi pers RDK bulanan"
+    release_url: "https://ojk.go.id/id/berita-dan-kegiatan/siaran-pers/default.aspx"
     write: fill
 
   rotation:
     title: Saham vs SBN bulanan
     description: Arus bersih asing di saham dan obligasi pemerintah SBN (OJK), Rp triliun per bulan. Kolom H adalah rumus, tidak ditimpa.
     range: "'Arus Modal Asing'!A33:H44"
+    frequency: "monthly"
+    lag_days: 10
+    release: "OJK, konferensi pers RDK bulanan"
+    release_url: "https://ojk.go.id/id/berita-dan-kegiatan/siaran-pers/default.aspx"
+    note: "Kolom B (SBN) yang dihitung kosongnya."
     write: fill
 
   srbi:
     title: Kepemilikan asing di SRBI
     description: Posisi kepemilikan asing di SRBI (Bank Indonesia), Rp triliun.
     range: "'Arus Modal Asing'!A48:G51"
+    frequency: "irregular"
+    stale_after_days: 60
+    release: "BI/berita, tidak terjadwal"
     write: fill
 
   # ---------------- World and US ----------------------------------------------
@@ -95,24 +145,40 @@ datasets:
     title: PMI Manufaktur Global bulanan
     description: J.P. Morgan Global Manufacturing PMI bulanan (50 = batas ekspansi), dengan penerbit, URL sumber, dan tingkat kepercayaan.
     range: "'PMI Global'!A2:G"
+    frequency: "monthly"
+    lag_days: 3
+    release: "S&P Global / J.P. Morgan, hari kerja pertama bulan berikutnya"
+    release_url: "https://www.pmi.spglobal.com/Public/Release/PressReleases"
     write: append
 
   cpmi:
     title: PMI China bulanan
     description: PMI manufaktur resmi China (NBS) bulanan.
     range: "'PMI China'!A2:G"
+    frequency: "monthly"
+    lag_days: 1
+    release: "NBS China, hari terakhir bulan berjalan"
+    release_url: "https://www.stats.gov.cn/english/PressRelease/"
     write: append
 
   ism:
     title: ISM PMI Manufaktur AS bulanan
     description: ISM Manufacturing PMI Amerika Serikat bulanan dengan penerbit, URL sumber, kepercayaan.
     range: "'ISM AS'!A2:G"
+    frequency: "monthly"
+    lag_days: 3
+    release: "ISM, hari kerja pertama bulan berikutnya"
+    release_url: "https://www.ismworld.org/supply-management-news-and-reports/reports/ism-report-on-business/"
     write: append
 
   fed:
     title: Fed Funds Rate bulanan
     description: Target federal funds rate AS (Federal Reserve), posisi akhir bulan, dengan penerbit, URL sumber, dan tingkat kepercayaan.
     range: "'Fed Funds'!A2:I"
+    frequency: "monthly"
+    lag_days: 1
+    release: "Federal Reserve (FOMC); posisi akhir bulan, otomatis lewat FRED"
+    release_url: "https://fred.stlouisfed.org/series/DFEDTARU"
     write: append
     updater:
       type: fred
@@ -134,6 +200,10 @@ datasets:
     title: PDB riil AS kuartalan
     description: PDB riil AS (QoQ, laju tahunan) per kuartal dengan sumber dan kepercayaan.
     range: "'PDB AS'!A2:G"
+    frequency: "quarterly"
+    lag_days: 30
+    release: "BEA, estimasi awal sekitar 4 pekan setelah kuartal"
+    release_url: "https://fred.stlouisfed.org/series/A191RL1Q225SBEA"
     write: append
     updater:
       type: fred
@@ -153,18 +223,28 @@ datasets:
     title: Perdagangan per mitra
     description: Ekspor/impor nonmigas Indonesia per mitra (kumulatif Jan-Agu 2026, USD miliar) dengan koordinat titik peta.
     range: "'Perdagangan per Mitra'!A2:J8"
+    frequency: "snapshot"
+    release: "BPS, kumulatif Jan-Agu 2026"
+    release_url: "https://www.bps.go.id/id/pressrelease"
     write: none
 
   komoditas:
     title: Harga komoditas bulanan
     description: Harga bulanan batu bara Australia, CPO, nikel (World Bank Pink Sheet).
     range: "Komoditas!A2:I"
+    frequency: "monthly"
+    lag_days: 5
+    release: "World Bank Pink Sheet, awal bulan berikutnya"
+    release_url: "https://www.worldbank.org/en/research/commodity-markets"
     write: append
 
   kredit:
     title: Kredit per provinsi
     description: Kredit bank per provinsi (total, pertanian, pertambangan, industri), Agu 2025 vs Agu 2026, SEKDA BI.
     range: "'Kredit per Provinsi'!A2:U35"
+    frequency: "snapshot"
+    release: "BI SEKDA tabel II.7 (Agu 2025 vs Agu 2026)"
+    release_url: "https://www.bi.go.id/id/statistik/ekonomi-keuangan/sekda/default.aspx"
     write: none
 
   # ---------------- Stock market (GOOGLEFINANCE formulas in the Sheet) -------
@@ -174,24 +254,45 @@ datasets:
     title: Harga saham bulanan
     description: Penutupan akhir bulan IHSG, IDXFINANCE, BBCA, BBRI, BMRI, BBNI (rumus Google Finance).
     range: "Saham!A2:L"
+    frequency: "monthly"
+    lag_days: 1
+    release: "Rumus GOOGLEFINANCE; salin baris rumus ke bawah tiap bulan"
     write: none
 
   tambang:
     title: Harga saham tambang bulanan
     description: Penutupan akhir bulan IDXENERGY, IDXBASIC, ADRO, PTBA, ITMG, BUMI, ANTM, INCO, MDKA, AMMN (rumus Google Finance).
     range: "'Saham Tambang'!A2:P"
+    frequency: "monthly"
+    lag_days: 1
+    release: "Rumus GOOGLEFINANCE; salin baris rumus ke bawah tiap bulan"
     write: none
 
   sahamasia:
     title: Saham Asia bulanan
     description: Penutupan akhir bulan IHSG, S&P 500, 7 indeks Asia, dan ETF USD (rumus Google Finance).
     range: "'Saham Asia'!A2:V"
+    frequency: "monthly"
+    lag_days: 1
+    release: "Rumus GOOGLEFINANCE; salin baris rumus ke bawah tiap bulan"
+    write: none
+
+  sahamglobal:
+    title: Saham global bulanan
+    description: Penutupan akhir bulan IHSG vs pasar besar dunia (S&P 500, FTSE 100, DAX, CAC 40, Nikkei 225, Hang Seng, CSI 300) dan ETF URTH/EIDO dalam USD (rumus Google Finance).
+    range: "'Saham Global'!A2:P"
+    frequency: "monthly"
+    lag_days: 1
+    release: "Rumus GOOGLEFINANCE; salin baris rumus ke bawah tiap bulan"
+    note: "CSI 300 tidak punya data Okt'25 di Google Finance, jadi perubahannya dihitung sejak Nov'25."
     write: none
 
   sektor:
     title: Komposisi IHSG per sektor
     description: Kapitalisasi dan bobot 11 sektor IDX-IC pada akhir Mar 2026, saham terbesar tiap sektor.
     range: "'Sektor IHSG'!A2:I13"
+    frequency: "snapshot"
+    release: "IDX / berita, potret akhir Mar 2026"
     write: none
 
   # ---------------- Bonds, ownership, valuation ------------------------------
@@ -199,12 +300,20 @@ datasets:
     title: Yield SBN dan UST 10 tahun
     description: Yield SBN 10 tahun dan US Treasury 10 tahun pada tanggal tercatat, selisih dihitung.
     range: "'Yield SBN'!A2:J"
+    frequency: "irregular"
+    stale_after_days: 14
+    period_col: 9
+    release: "Kutipan berita/data harian, tidak terjadwal"
+    release_url: "https://www.investing.com/rates-bonds/indonesia-10-year-bond-yield-historical-data"
     write: append
 
   valuasi:
     title: Valuasi IHSG (PER, PBV)
     description: PER dan PBV IHSG dari beberapa sumber, dengan rata-rata historis.
     range: "'Valuasi IHSG'!A2:K"
+    frequency: "irregular"
+    stale_after_days: 30
+    release: "Riset sekuritas/berita, tidak terjadwal"
     write: append
     key: [0, 4]                # same date can come from several sources: date + publisher
 
@@ -212,18 +321,26 @@ datasets:
     title: Kepemilikan asing di saham (KSEI)
     description: Nilai saham dipegang asing (Rp triliun) dan porsi dari total, dari KSEI.
     range: "'Asing KSEI'!A2:H9"
+    frequency: "irregular"
+    stale_after_days: 60
+    release: "KSEI, statistik bulanan"
+    release_url: "https://www.ksei.co.id/publications/Data_Statistik_KSEI"
     write: fill
 
   asingnegara:
     title: Negara asal manajer investasi asing
     description: Jumlah emiten yang dipegang >1% menurut negara asal manajer investasi asing, 31 Jul 2026.
     range: "'Asing KSEI'!A14:H18"
+    frequency: "snapshot"
+    release: "Berita, 31 Jul 2026"
     write: none
 
   asingrisiko:
     title: Konsentrasi dan risiko arus asing
     description: Net sell asing di 4 bank besar, total net sell, skenario MSCI.
     range: "'Asing KSEI'!A21:H26"
+    frequency: "snapshot"
+    release: "Berita dan perhitungan, Okt 2026"
     write: none
 
   # ---------------- Local files --------------------------------------------
@@ -231,8 +348,16 @@ datasets:
     title: Batas negara dunia (Natural Earth 1:50m)
     description: Daratan dan batas negara, domain publik (naturalearthdata.com), lewat world-atlas. Dipakai Peta koneksi.
     file: data/files/world-50m.topo.json
+    frequency: "static"
 
   provinces:
     title: Batas 34 provinsi Indonesia (geoBoundaries)
     description: geoBoundaries IDN ADM1 (William & Mary geoLab, data OpenStreetMap, lisensi ODbL), disederhanakan. Dipakai Peta kredit.
     file: data/files/idn-provinces.topo.json
+    frequency: "static"
+
+  insights:
+    title: Insight dari Claude
+    description: Bacaan data yang ditulis skill economic-insights (.claude/skills/economic-insights), setiap angkanya dicek terhadap scripts/digest.py.
+    file: data/insights/latest.json
+    frequency: "static"

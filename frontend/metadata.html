@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Metadata Data</title>
+<link rel="stylesheet" href="css/theme.css">
+<link rel="stylesheet" href="css/admin.css">
+<link rel="stylesheet" href="css/metadata.css">
+</head>
+<body>
+
+<header class="adm-top">
+<div class="adm-bar" role="toolbar" aria-label="Data">
+  <a class="adm-btn" href="index.html">← Dashboard</a>
+  <span class="adm-grow" id="md-asof">Memuat…</span>
+  <button class="adm-btn" id="md-refresh" title="Baca ulang semua dataset dari Google Sheet">Tarik semua dari Sheet</button>
+  <a class="adm-btn" id="md-sheet" href="#" target="_blank" rel="noopener">Buka Sheet ↗</a>
+</div>
+<!-- the progress panel is inserted here by js/jobs-ui.js -->
+</header>
+
+<main class="md">
+  <h1 class="md-title">Metadata data</h1>
+  <p class="md-sub">
+    Untuk tiap dataset: periode terbaru yang ada di Sheet, periode yang <em>seharusnya</em> sudah rilis menurut jadwal penerbitnya,
+    sel yang masih kosong, dan hasil penarikan terakhir. Jadwal rilis (frekuensi dan jeda publikasi) diatur di
+    <code>config/datasets.yaml</code>. Angkanya perkiraan, jadi cocokkan dengan kalender rilis BPS, BI, dan OJK.
+  </p>
+
+  <section class="md-tiles" id="md-tiles" aria-label="Ringkasan"></section>
+
+  <div class="md-filters" role="group" aria-label="Saring" id="md-filters"></div>
+
+  <div class="md-table-wrap">
+    <table class="md-table" id="md-table">
+      <thead>
+        <tr>
+          <th>Status</th>
+          <th>Dataset</th>
+          <th>Data terakhir</th>
+          <th>Seharusnya ada</th>
+          <th>Keterangan</th>
+          <th>Diperbarui</th>
+          <th>Sumber rilis</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="md-body"><tr><td colspan="8">Memuat…</td></tr></tbody>
+    </table>
+  </div>
+</main>
+
+<div class="adm-toast" id="adm-toast" role="status" aria-live="polite"></div>
+
+<script src="js/jobs-ui.js"></script>
+<script src="js/metadata.js"></script>
+</body>
+</html>

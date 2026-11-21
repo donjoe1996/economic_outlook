@@ -5,6 +5,9 @@ secrets/
 data/cache/*.json
 data/cache/*.tmp
 
+# Insights written by the Claude skill (your own analysis; regenerate any time)
+data/insights/*.json
+
 # Python
 .venv/
 __pycache__/
