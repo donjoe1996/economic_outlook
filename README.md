@@ -40,21 +40,78 @@ network.
 
 ## Connect Google Sheets (one time, about 10 minutes)
 
-The app signs in **as you** (OAuth). Google needs an "OAuth client" that
-identifies this app. Steps (from Google's official
-[Sheets API Python quickstart](https://developers.google.com/workspace/sheets/api/quickstart/python)):
+The app signs in **as you** (OAuth). That needs two files:
 
-1. Go to https://console.cloud.google.com/ and create a project (any name).
-2. *APIs & Services → Library*: enable the **Google Sheets API**.
-3. *APIs & Services → OAuth consent screen*: choose **External**, fill in the
-   app name and your email, and add yourself under **Test users**.
-4. *APIs & Services → Credentials → Create credentials → OAuth client ID*,
-   with application type **Desktop app**. Download the JSON file.
-5. Save it as `secrets/credentials.json` in this folder.
-6. In the app, click **Hubungkan Google**. A browser tab asks you to allow
-   access. The app saves `secrets/token.json` and pulls the data.
+| File | What it is | Who makes it |
+|---|---|---|
+| `secrets/credentials.json` | The app's identity ("I am the economic-outlook desktop app") | You, once, in Google Cloud Console (Part A) |
+| `secrets/token.json` | Your permission ("this account allows the app to edit its Sheets") | The app, when you click **Hubungkan Google** (Part B) |
 
-`secrets/` is git-ignored, so never commit it. Delete `token.json` to sign out.
+The menu names below match Google Cloud Console as of November 2026, where
+the OAuth settings live under **Google Auth Platform**. Older layouts put the
+same settings under *APIs & Services → OAuth consent screen / Credentials*.
+
+### Part A: register the app in Google Cloud
+
+1. **Project.** At https://console.cloud.google.com/, sign in with the Gmail
+   account that owns the Sheet. Open the project picker (top bar), click
+   **New project**, name it e.g. `economic-outlook`, and click **Create**.
+   Check that the top bar shows this project.
+2. **Sheets API.** Go to Menu ☰ → *APIs & Services* → **Library**. Search
+   for **Google Sheets API** and click **Enable**.
+3. **Google Auth Platform.** Search for "Google Auth Platform" in the top
+   bar, or find it under *APIs & Services*. The left menu shows
+   *Overview, Branding, Audience, Clients, Data Access, Verification Center, Settings*.
+   - **Get started / Branding:** app name `economic-outlook` and your
+     email as the support and contact address.
+   - **Audience:** user type **External**. "Internal" only exists for
+     company Workspace accounts.
+4. **Add yourself as a test user (easy to miss).** Go to **Audience** →
+   **Test users** → **+ Add users**, type your Gmail address, press Enter,
+   and click **Save**.
+   While the app is in *Testing*, Google lets in **only** the accounts on
+   this list. Being the project owner does not count. Skip this step and
+   sign-in fails with *"Access blocked … Error 403: access_denied"*.
+5. **Clients.** Click **+ Create client**. Choose application type
+   **Desktop app**, give it any name, and click **Create**. Then click
+   **Download JSON**.
+6. Put the file in this project as `secrets/credentials.json`. Create the
+   `secrets` folder next to `run.py`, and rename the downloaded
+   `client_secret_….json`. If you see `credentials.json.json`, the name is
+   wrong (macOS hides `.json` endings).
+
+### Part B: sign in from the app
+
+1. Restart the app (Ctrl+C, then `./start.sh`). The toolbar should say
+   **Google: belum masuk** (not signed in), not *belum disiapkan* (not set up).
+2. Click **Hubungkan Google**. A browser tab opens.
+3. *"Google hasn't verified this app"* is expected for a personal app that
+   nobody has reviewed. Click **Advanced** →
+   **Go to economic-outlook (unsafe)**.
+4. On the permissions screen, **tick the Google Sheets checkbox**, then
+   click **Continue**. If it stays unticked, sign-in "succeeds" but every
+   read fails with a permission error.
+5. The progress panel shows *Membaca dari Google Sheet … 0/27 → 27/27*
+   (reading from Google Sheet), and the charts fill in.
+
+`secrets/` is git-ignored, so it never goes to GitHub. To sign out, delete
+`secrets/token.json`.
+
+### If something goes wrong
+
+| What you see | Cause | Fix |
+|---|---|---|
+| Red message: *credentials.json belum ada* | Part A not done, or the file is misnamed or in the wrong folder | Check `secrets/credentials.json` |
+| Google page: *Access blocked … Error 403: access_denied* | Your Gmail isn't a test user | Part A step 4, then restart the app and try again |
+| Progress keeps waiting on *Menunggu persetujuan Anda di tab browser* | You closed the Google tab, or Google blocked you on its own page. Google never reports back to the app | It gives up by itself after 5 minutes, or restart the app |
+| Pull fails with a permission error right after signing in | The Sheets checkbox wasn't ticked | Delete `secrets/token.json`, then sign in again and tick it |
+| You have to sign in again about every 7 days | In *Testing* mode, Google expires sign-ins after 7 days | Click **Hubungkan Google** again, or Audience → **Publish app**. For a personal app you don't need Google's review; you'll just keep seeing the "unverified" warning |
+| *Error 400: redirect_uri_mismatch* | The client is not a **Desktop app** | Create a new client of type Desktop app and replace `credentials.json` |
+
+**Where the project lives matters.** `credentials.json` and especially
+`token.json` are keys to *all* your Google Sheets. Git keeps them off GitHub,
+but a Google Drive or Dropbox–synced folder uploads them anyway. A normal
+local folder (e.g. `~/Projects/economic_outlook`) is safer.
 
 **No Google yet?** Download the Sheet (*File → Download → .xlsx*) and run
 `.venv/bin/python scripts/import_xlsx.py <file>.xlsx`. On Windows, use
