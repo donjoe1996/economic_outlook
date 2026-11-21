@@ -422,7 +422,7 @@ is no API key, and nothing is billed beyond your Claude Code plan.
 |---|---|---|
 | **✦ Buat / Perbarui insight** (Insight panel) | Python builds the fact sheet; Claude writes the insights as JSON that must match a schema; Python checks every number. If a number is not in the facts, Claude gets one fix round; otherwise nothing is published | nothing: the facts are in the prompt |
 | **✦ Isi dengan Claude** (a stock's Valuasi or Dividen tab) | Claude researches the missing figures (the issuer's reports first, then OJK and BEI, then established financial press; never blogs, forums, aggregators or Wikipedia), labels derived figures with their formula, and returns rows with sources. You untick what you don't trust; nothing is saved before **Simpan** | WebSearch and WebFetch only |
-| **Tanya Claude** (chat under the Insight panel) | Ask anything about the data. Claude reads the dataset files it needs, names the dataset and period of every number, and remembers the conversation until **Percakapan baru** (new conversation) | reading the files in `data/store/` only |
+| **Tanya Claude** (chat under the Insight panel) | Ask anything about the data. Python picks the data the question is about; Claude answers in one turn, naming dataset and period; every number in the answer is checked against what was sent | nothing: the data is in the prompt |
 
 **Setup:** install Claude Code, run `claude` once in a terminal and sign in,
 then start the app from a terminal (`./start.sh`), so it can find `claude`.
@@ -435,11 +435,31 @@ listed above is refused, so it cannot run commands or edit files.
 - **The buttons** run in an empty temporary folder with file reading denied.
   Text on a web page therefore can't steer the research into reading your
   files (for example `secrets/token.json`).
-- **The chat** runs inside `data/store/` and has no web access, so what it
-  reads can't leave your computer.
+- **The chat** has no tools at all: it sees only the data Python put in its
+  prompt.
 
-**Timing:** an insight run takes about 30–60 s, a stock research run 1–3
-minutes, and a chat answer usually 10–30 s.
+**How the chat stays fast, cheap and accurate** (`backend/chat_context.py`):
+
+- **Python picks the data, not the model.** Every question gets the fact sheet
+  (levels, changes and correlations already computed). On top of that it
+  gets only the datasets the question is about, found by keyword: "bunga" →
+  BI Rate, "asingnya" → foreign flows. Each comes as its last rows. A stock
+  code such as BMRI adds its price summary, fundamentals, foreign flows, and
+  P/BV and P/E computed in Python. The previous question's stock carries
+  over, so "lalu arus asingnya?" (and its foreign flows?) works.
+- **One turn, no tools.** It uses a short system prompt instead of Claude
+  Code's default prompt, a fast model (`haiku`; set `IEO_CHAT_MODEL=sonnet`
+  for longer reasoning), and answers of about 120 words. The last three
+  exchanges go along for context.
+- **Checked numbers.** Every number in the answer is matched against the data
+  that was sent (allowing rounding and Indonesian number style). Any that
+  isn't found is shown under the answer as unverified, together with the
+  list of datasets used.
+- **Result:** about 7–9k tokens and 13–20 s per answer, against tens of
+  thousands of tokens when Claude Code explored the files itself.
+
+**Timing:** an insight run takes about 30–60 s, and a stock research run 1–3
+minutes.
 
 ## Insights written by Claude (project skill)
 
@@ -517,9 +537,9 @@ never touch your real Sheets, Drive or Claude account.
 
 ## Known limits, worth thinking about
 
-- **Narrative text is fixed.** The paragraphs in *Ringkasan narasi* and some
-  chart hints ("Okt'25 = 100", fixed y-axis ranges such as `yMin: 44, yMax: 56`)
-  are written into the HTML. Numbers and charts update from data; prose does not.
+- **Some chart hints are fixed.** Hints such as "Okt'25 = 100" and fixed y-axis
+  ranges (`yMin: 44, yMax: 56`) are written into the HTML. Numbers and charts
+  update from data; written readings come from the Insight panel and the chat.
 - **Rupiah** stops at row 13 on purpose, because row 14 is a single day's rate
   rather than a monthly average.
 - **Paywalled sources** (S&P Global PMI, ISM) have no free API, so they stay

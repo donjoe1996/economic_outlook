@@ -273,45 +273,45 @@ def proposal_rows(code: str, proposal: dict) -> dict[str, list[list[str]]]:
 
 
 # ======================================================================= chat
-CHAT_RULES = """You are the analyst inside an Indonesian economic dashboard, talking with its one user, an investor who wants to understand, not to be told what to buy.
-Answer in Indonesian. Start from the big picture, then narrow down to the answer; explain the reasoning so the user learns to read the data themselves.
-Your working folder holds the dashboard's data: one JSON file per dataset (a schema with column names and types, then rows as arrays), and datapackage.json lists every dataset with its title and row count. Read the files you need; do not guess numbers.
-When you quote a number, say which dataset and period it comes from. If the data needed is missing or old, say so plainly.
-Correlation is not causation. No buy or sell recommendations. Keep answers short unless the user asks for depth; use short paragraphs and bullet lists, no tables wider than 4 columns."""
+CHAT_RULES = """Anda analis di dalam dashboard ekonomi Indonesia, berbicara dengan satu pengguna: investor yang ingin memahami, bukan diberi tahu apa yang harus dibeli.
+Jawab dalam bahasa Indonesia, singkat: maksimal 120 kata kecuali pengguna minta detail. Mulai dari gambaran besar, lalu ke jawabannya; tunjukkan alasannya supaya pengguna belajar membaca datanya sendiri.
+Pakai HANYA angka yang ada di FAKTA dan DATA TERKAIT di bawah. Jangan menghitung angka baru dan jangan memakai pengetahuan umum untuk angka. Setiap angka disertai dataset dan periodenya.
+Bila data yang dibutuhkan tidak ada atau sudah lama, katakan terus terang.
+Korelasi bukan sebab-akibat. Tidak ada rekomendasi beli atau jual. Paragraf pendek dan daftar berpoin; tanpa tabel."""
 
-# The chat may only read the data folder it runs in; everything else is refused
-# (dontAsk), and it has no web access, so nothing it reads can leave this computer.
-CHAT_DENY = ("Bash", "Write", "Edit", "NotebookEdit", "WebFetch", "WebSearch", "Task", "Agent")
+# Fast and cheap by default; set IEO_CHAT_MODEL (e.g. "sonnet") for longer reasoning.
+CHAT_MODEL = os.environ.get("IEO_CHAT_MODEL", "haiku")
 
 
-def chat(question: str, session_id: str | None, progress: Progress = NO_PROGRESS, store_dir: Path | None = None,
-         facts: str | None = None, runner=None) -> dict:
-    """One turn of the dashboard chat. The first turn includes the fact sheet;
-    later turns resume the same Claude Code conversation by session id."""
+def chat(question: str, history: list[dict] | None = None, progress: Progress = NO_PROGRESS,
+         cfg=None, store=None, facts: str | None = None, runner=None) -> dict:
+    """One chat turn: Python picks the data, Claude Code answers in one go
+    (no tools, short system prompt), Python checks the numbers."""
+    from . import chat_context
+    from .config import load_config
+    from .store import Store
+
     question = (question or "").strip()
     if not question:
         raise ValueError("Pertanyaannya kosong.")
-    if runner is not None:
-        return runner(question, session_id)
-    from .config import STORE_DIR
-
-    cwd = store_dir or STORE_DIR
-    if not (cwd / "datapackage.json").exists():
+    if len(question) > 2000:
+        raise ValueError("Pertanyaannya terlalu panjang (maks. 2000 karakter).")
+    cfg = cfg or load_config()
+    store = store or Store()
+    if not store.ids():
         raise AIUnavailable("Belum ada data di penyimpanan (data/store). Klik ⟳ Tarik dulu.")
-    args = ["--disallowedTools", " ".join(CHAT_DENY), "--append-system-prompt", CHAT_RULES]
-    if session_id:
-        if not all(c.isalnum() or c == "-" for c in session_id):
-            raise ValueError("session id tidak sah")
-        args += ["--resume", session_id]
-        prompt = question
+    progress.step("Memilih data yang relevan")
+    pack = chat_context.build(question, cfg, store, history, facts=facts)
+    progress.step("Claude menjawab dari: " + ", ".join(pack["used"]))
+    if runner is not None:
+        answer = runner(pack["prompt"])
     else:
-        if facts is None:
-            sys.path.insert(0, str(ROOT / "scripts"))
-            import insights as ins  # scripts/insights.py
-            facts = ins.digest_text()
-        prompt = ("Ringkasan fakta yang sudah dihitung dari data (pakai sebagai titik awal; baca file JSON "
-                  "di folder ini untuk detail):\n\n" + facts + "\n\nPERTANYAAN:\n" + question)
-    progress.step("Claude sedang membaca data dan menyusun jawaban")
-    result = _run(args, prompt, cwd, progress, timeout=600, show=("Read",))
-    return {"answer": str(result.get("result") or "").strip(), "session_id": result.get("session_id")}
-
+        args = ["--no-session-persistence", "--system-prompt", CHAT_RULES, "--tools", "", "--model", CHAT_MODEL]
+        with tempfile.TemporaryDirectory(prefix="ieo-chat-") as empty:
+            result = _run(args, pack["prompt"], Path(empty), progress, timeout=180, show=())
+        answer = str(result.get("result") or "").strip()
+        u = result.get("usage") or {}
+        tokens = sum(int(u.get(k) or 0) for k in ("input_tokens", "cache_creation_input_tokens",
+                                                 "cache_read_input_tokens", "output_tokens"))
+    return {"answer": answer, "used": pack["used"], "tokens": tokens if runner is None else None,
+            "unverified": chat_context.unverified_numbers(answer, pack["context"], question)}

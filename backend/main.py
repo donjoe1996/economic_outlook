@@ -122,9 +122,14 @@ class SaveRowsBody(BaseModel):
     rows: dict[str, list[list[str]]]
 
 
+class ChatTurn(BaseModel):
+    q: str
+    a: str
+
+
 class ChatBody(BaseModel):
     question: str
-    session_id: str | None = None
+    history: list[ChatTurn] = []
 
 
 class ApplyBody(BaseModel):
@@ -248,11 +253,13 @@ def insights_generate():
 
 @app.post("/api/chat")
 def chat(body: ChatBody):
-    """One question to Claude Code about the dashboard's data (a job; the page
-    shows which files it reads, then the answer)."""
+    """One question about the dashboard's data: Python picks the data, Claude
+    Code answers in one turn without tools, the numbers are checked."""
+    hist = [{"q": t.q, "a": t.a} for t in body.history[-3:]]
+
     def work(p: Job):
-        service()   # makes sure data/store exists (first start converts the old copy)
-        return ai.chat(body.question, body.session_id, progress=p)
+        svc = service()   # also makes sure data/store exists (first start converts the old copy)
+        return ai.chat(body.question, hist, progress=p, cfg=svc.cfg, store=svc.store)
 
     return jobs.start("chat", "Claude menjawab pertanyaan", work).view()
 

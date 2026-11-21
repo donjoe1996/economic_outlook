@@ -37,7 +37,7 @@
   const bar = (sel) => () => { const s = $(sel); return s && s.previousElementSibling && s.previousElementSibling.classList.contains('eo-fold-bar') ? s.previousElementSibling : s; };
   const SECTIONS = [
     ['AI', 'Insight Claude', () => $('#eo-claude')],
-    ['BRF', 'Ringkasan narasi', bar('section.eo-note')],
+    ['ASK', 'Tanya Claude', () => $('#eo-chat')],
     ['MAP', 'Peta koneksi', () => $('#eo-map')],
     ['WRLD', 'Ekonomi global', () => $('#eo-global')],
     ['US', 'Ekonomi AS', () => $('#eo-us')],
@@ -60,7 +60,7 @@
     BI: 'bi rate suku bunga pemotongan', IND: 'indikator kpi', CHRT: 'pmi inflasi cpi grafik chart', DRV: 'riil spread turunan',
     CRED: 'kredit provinsi sekda daerah', MKT: 'ihsg bank bbca bbri bmri bbni idxfinance asing flow', SECT: 'sektor bobot kapitalisasi',
     MINE: 'tambang batu bara coal nikel nickel cpo komoditas adro ptba antm inco', RATE: 'sbn yield obligasi valuasi per pbv srbi ksei',
-    MAP: 'peta map asia global perdagangan ekspor', AI: 'insight claude ringkasan ai', 'Q&A': 'pertanyaan syarat beli',
+    MAP: 'peta map asia global perdagangan ekspor', AI: 'insight claude ringkasan ai', ASK: 'tanya chat pertanyaan claude', 'Q&A': 'pertanyaan syarat beli',
   };
   // Single-stock pages (stock.html?tk=CODE). The list comes from /api/stocks:
   // stocks with their own sheet (BMRI) plus every row of the Saham sheet's

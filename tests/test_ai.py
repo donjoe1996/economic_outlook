@@ -113,38 +113,74 @@ def test_missing_claude_code_is_explained(monkeypatch):
         ai.claude_bin()
 
 
+@pytest.fixture
+def chat_env(tmp_path):
+    from backend.config import AppConfig, Dataset, SheetRange
+    from backend.store import Store
+    st = Store(tmp_path / "store")
+    st.put("birate", header=["Periode", "BI Rate", "Unit", "Penerbit"], source="t",
+           values=[["Jul'26", "5.5", "%", "BI"], ["Agu'26", "5.75", "%", "BI"], ["Sep'26", "5.75", "%", "BI"]])
+    st.put("ikk", header=["Periode", "IKK"], source="t", values=[["Sep'26", "118.1"]])
+    cfg = AppConfig("x", {
+        "birate": Dataset("birate", "BI Rate bulanan", range=SheetRange.parse("'BI Rate'!A2:D")),
+        "ikk": Dataset("ikk", "Indeks Keyakinan Konsumen", range=SheetRange.parse("IKK!A2:B")),
+    })
+    return cfg, st
+
+
+def test_chat_sends_only_the_data_the_question_is_about(chat_env):
+    cfg, st = chat_env
+    seen = {}
+
+    def runner(prompt):
+        seen["prompt"] = prompt
+        return "BI Rate naik ke 5,75% pada Agu'26 (BI Rate bulanan) dan sekarang 6,25%."
+    out = ai.chat("Kenapa BI menaikkan suku bunga?", [{"q": "Halo", "a": "Hai"}], cfg=cfg, store=st,
+                  facts="PMI global 53.0", runner=runner)
+    assert out["used"] == ["Ringkasan fakta", "BI Rate bulanan"]           # "menaIKKan" does not pull in ikk
+    assert "Sep'26 | 5.75" in seen["prompt"] and "118.1" not in seen["prompt"]
+    assert "Pengguna: Halo" in seen["prompt"] and seen["prompt"].rstrip().endswith("Kenapa BI menaikkan suku bunga?")
+    assert out["unverified"] == ["6,25"]                                   # 5,75 is in the data, 6,25 is not
+
+
 @pytest.mark.skipif(os.name == "nt", reason="uses a POSIX script as the fake claude")
-def test_chat_runs_in_the_data_folder_and_resumes_the_conversation(tmp_path, monkeypatch):
-    store = tmp_path / "store"
-    store.mkdir()
-    (store / "datapackage.json").write_text("{}")
-    log = tmp_path / "calls.jsonl"
+def test_chat_is_one_turn_without_tools(chat_env, tmp_path, monkeypatch):
+    cfg, st = chat_env
+    log = tmp_path / "call.json"
     script = tmp_path / "claude"
     script.write_text(f"""#!{sys.executable}
 import json, os, sys
 prompt = sys.stdin.read()
-with open({str(log)!r}, "a") as f:
-    f.write(json.dumps({{"argv": sys.argv[1:], "cwd": os.getcwd(), "prompt": prompt}}) + "\\n")
-print(json.dumps({{"type": "assistant", "message": {{"content": [{{"type": "tool_use", "name": "Read", "input": {{"file_path": os.getcwd() + "/pmi.json"}}}}]}}}}))
-print(json.dumps({{"type": "result", "subtype": "success", "is_error": False, "result": "PMI **53,0** (Sep'26).", "session_id": "abc-123"}}))
+json.dump({{"argv": sys.argv[1:], "cwd": os.getcwd()}}, open({str(log)!r}, "w"))
+print(json.dumps({{"type": "result", "subtype": "success", "is_error": False, "result": "BI Rate 5,75% (Sep'26)."}}))
 """)
     script.chmod(script.stat().st_mode | stat.S_IEXEC)
     monkeypatch.setenv("CLAUDE_BIN", str(script))
-    from backend.jobs import Job
-    job = Job(id="1", kind="chat", title="t")
-    out = ai.chat("Bagaimana PMI?", None, progress=job, store_dir=store, facts="FAKTA X")
-    assert out == {"answer": "PMI **53,0** (Sep'26).", "session_id": "abc-123"}
-    assert any("pmi.json" in s["text"] for s in job.steps)
-    ai.chat("Dan bulan lalu?", "abc-123", store_dir=store)
-    first, second = [json.loads(l) for l in log.read_text().splitlines()]
-    assert os.path.realpath(first["cwd"]) == os.path.realpath(store)          # only the data folder is readable
-    assert "FAKTA X" in first["prompt"] and "--resume" not in first["argv"]
-    assert second["argv"][second["argv"].index("--resume") + 1] == "abc-123" and second["prompt"] == "Dan bulan lalu?"
-    deny = first["argv"][first["argv"].index("--disallowedTools") + 1]
-    assert "WebFetch" in deny and "Bash" in deny                              # nothing can leave the computer
+    out = ai.chat("BI rate sekarang?", None, cfg=cfg, store=st, facts="")
+    assert out["answer"] == "BI Rate 5,75% (Sep'26)." and out["unverified"] == []
+    call = json.loads(log.read_text())
+    argv = call["argv"]
+    assert argv[argv.index("--tools") + 1] == "" and "--system-prompt" in argv and "--model" in argv
+    assert "--resume" not in argv and "--no-session-persistence" in argv
+    assert os.path.realpath(call["cwd"]) != os.path.realpath(st.dir)      # an empty folder, not the data
+
+
+def test_chat_refuses_empty_and_huge_questions(chat_env):
+    cfg, st = chat_env
     with pytest.raises(ValueError):
-        ai.chat("x", "abc; rm -rf /", store_dir=store)
+        ai.chat("  ", cfg=cfg, store=st, facts="", runner=lambda p: "")
+    with pytest.raises(ValueError):
+        ai.chat("x" * 2001, cfg=cfg, store=st, facts="", runner=lambda p: "")
 
 
 def test_one_shot_runs_deny_local_files():
     assert {"Read", "Bash", "Glob", "Grep"} <= set(ai.NO_LOCAL)
+
+
+def test_chat_follow_up_keeps_the_stock_and_reads_suffixes():
+    from backend import chat_context
+    from backend.config import load_config
+    cfg = load_config()
+    q = "Lalu bagaimana arus asingnya?"
+    assert "flow" in chat_context.match_datasets(q, cfg, {"flow", "birate"})          # asingnya -> asing
+    assert chat_context.match_datasets("Kenapa BI menaikkan suku bunga?", cfg, {"ikk", "birate"}) == ["birate"]

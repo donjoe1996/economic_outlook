@@ -1,15 +1,16 @@
 /*
- * "Tanya Claude" chat, under the insight panel. Each question runs Claude Code
- * on this computer (POST /api/chat, backend/ai.py: chat) inside the data
- * folder, so it answers from the dashboard's own data. Later questions resume
- * the same Claude Code conversation (session id), so it remembers the thread.
+ * "Tanya Claude" chat, under the insight panel (POST /api/chat).
+ * The backend picks the data the question is about (backend/chat_context.py),
+ * Claude Code answers in one turn without tools, and every number in the
+ * answer is checked against that data: numbers it can't find are listed
+ * under the answer. The last three exchanges go along, so follow-ups work.
  *
  * The conversation is kept in sessionStorage (this tab only). Answers are
  * escaped first and then given a little Markdown (bold, code, lists,
  * headings), so nothing in an answer can inject HTML.
  */
 (function () {
-  const KEY = 'eo-chat-v1';
+  const KEY = 'eo-chat-v2';
   const SUGGEST = [
     'Kenapa IHSG tertinggal dari bursa Asia tahun ini?',
     'Apa arti kenaikan BI Rate untuk saham bank?',
@@ -18,7 +19,7 @@
   const $ = (s, r) => (r || document).querySelector(s);
   const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
 
-  let state = { session: null, msgs: [] };
+  let state = { msgs: [] };
   try { state = JSON.parse(sessionStorage.getItem(KEY)) || state; } catch (e) { /* private mode */ }
   const save = () => { try { sessionStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { /* ignore */ } };
 
@@ -46,9 +47,22 @@
   // --- view --------------------------------------------------------------------
   function bubble(m) {
     const b = el('div', 'eo-chat-msg ' + (m.role === 'user' ? 'me' : m.error ? 'err' : 'ai'));
-    if (m.role === 'user') b.textContent = m.text;
-    else { b.innerHTML = md(m.text); }   // safe: md() escapes before adding tags
+    if (m.role === 'user') { b.textContent = m.text; return b; }
+    b.innerHTML = md(m.text);   // safe: md() escapes before adding tags
+    if (m.used && m.used.length) b.append(el('div', 'eo-chat-used', 'Data: ' + m.used.join(' · ')));
+    if (m.unverified && m.unverified.length) {
+      b.append(el('div', 'eo-chat-warn', '⚠ Angka tidak ditemukan di data yang dikirim: ' + m.unverified.join(', ') + '. Cek sebelum dipakai.'));
+    }
     return b;
+  }
+  // the last three question/answer pairs, for follow-up questions
+  function history() {
+    const out = [];
+    for (let i = 0; i + 1 < state.msgs.length; i++) {
+      const u = state.msgs[i], a = state.msgs[i + 1];
+      if (u.role === 'user' && a.role === 'ai' && !a.error) out.push({ q: u.text, a: a.text });
+    }
+    return out.slice(-3);
   }
 
   function render(busyText) {
@@ -57,7 +71,7 @@
     log.replaceChildren(...state.msgs.map(bubble));
     if (!state.msgs.length) {
       const intro = el('div', 'eo-chat-empty');
-      intro.append(el('p', null, 'Tanya apa saja tentang data di dashboard ini. Claude membaca file data (JSON) yang sama dengan yang Anda lihat dan menyebut dataset serta periodenya.'));
+      intro.append(el('p', null, 'Tanya apa saja tentang data di dashboard ini. Aplikasi memilih data yang relevan, Claude menjawab dari data itu saja, lalu setiap angkanya dicek.'));
       const chips = el('div', 'eo-chat-chips');
       SUGGEST.forEach((q) => { const c = el('button', 'eo-chat-chip', q); c.type = 'button'; c.addEventListener('click', () => ask(q)); chips.append(c); });
       intro.append(chips);
@@ -75,12 +89,13 @@
     busy = true;
     const input = $('#eo-chat-input'), send = $('#eo-chat-send');
     input.value = ''; autosize(input); send.disabled = true;
+    const hist = history();
     state.msgs.push({ role: 'user', text: q }); save();
-    render('Claude sedang membaca data…');
+    render('Claude sedang menjawab…');
     try {
-      const out = await EOJobs.run('/api/chat', { question: q, session_id: state.session });
-      state.session = out.result.session_id || state.session;
-      state.msgs.push({ role: 'ai', text: out.result.answer || '(tanpa jawaban)' });
+      const out = await EOJobs.run('/api/chat', { question: q, history: hist });
+      const r = out.result || {};
+      state.msgs.push({ role: 'ai', text: r.answer || '(tanpa jawaban)', used: r.used || [], unverified: r.unverified || [] });
     } catch (e) {
       state.msgs.push({ role: 'ai', error: true, text: e.message });
     }
@@ -102,9 +117,9 @@
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); ask(input.value); } });
     input.addEventListener('input', () => autosize(input));
     const head = el('div', 'eo-chat-head');
-    head.append(el('span', 'eo-chat-note', 'Dijalankan lewat Claude Code di komputer ini · hanya membaca folder data · bacaan data, bukan rekomendasi investasi'));
+    head.append(el('span', 'eo-chat-note', 'Claude Code di komputer ini · menjawab hanya dari data dashboard · bacaan data, bukan rekomendasi investasi'));
     const fresh = el('button', 'adm-btn eo-chat-newbtn', 'Percakapan baru'); fresh.id = 'eo-chat-new'; fresh.type = 'button';
-    fresh.addEventListener('click', () => { state = { session: null, msgs: [] }; save(); render(); input.focus(); });
+    fresh.addEventListener('click', () => { state = { msgs: [] }; save(); render(); input.focus(); });
     head.append(fresh);
     box.replaceChildren(head, el('div', 'eo-chat-log'), form);
     $('.eo-chat-log', box).id = 'eo-chat-log';
