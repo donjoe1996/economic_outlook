@@ -38,6 +38,28 @@ On the first run this creates `.venv` and installs the packages. It then opens
 http://127.0.0.1:8000. The server listens on your computer only, not on the
 network.
 
+## The interface
+
+The layout borrows a market terminal's discipline and Apple's typography.
+Read it top-down:
+
+| Zone | What it answers |
+|---|---|
+| **Monitor** (top strip) | What moved? 13 key series, each with its latest value, change and a 12-month line. Click a tile to jump to its section |
+| **Sinyal keputusan** | What does it mean? The verdict each section already computes, side by side (world, US, Indonesia, BI, market, mining, readiness) |
+| **Insight dari Claude** | Why? The current written reading (see the Claude skill below) |
+| **Function rail** (left) | Where is it? Function codes such as MAP, WRLD, BI, CRED and MKT; the active one is highlighted |
+
+- **Colour means one thing only.** Green or red means *good or bad for
+  Indonesian equities*, not up or down. A weaker Rupiah (USD/IDR ▲) is red; a
+  lower BI Rate (▼) is green. The arrow still shows the raw direction.
+- **Jump anywhere:** press `/` or ⌘K/Ctrl+K and type a code (`CRED`) or an
+  indicator (`pmi`, `batu bara`, `sbn`), then Enter.
+- **Theme:** ☀/☾ in the toolbar switches between dark (default) and light.
+  The choice is remembered.
+- The look lives in `frontend/css/terminal.css` (tokens at the top) and the
+  behaviour in `frontend/js/terminal.js`. Chart code is unchanged.
+
 ## Connect Google Sheets (one time, about 10 minutes)
 
 The app signs in **as you** (OAuth). That needs two files:
