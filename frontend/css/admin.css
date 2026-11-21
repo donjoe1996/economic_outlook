@@ -85,3 +85,33 @@ dialog.adm-dlg::backdrop { background: rgba(0, 0, 0, .35); }
 .adm-warn li { overflow-wrap: anywhere; }
 .adm-toast.warn { background: var(--color-warn); color: #fff; }
 .adm-act-job.partial summary span { color: var(--color-warn); }
+
+/* table editor (js/table-editor.js) */
+dialog.te-dlg { width: min(1200px, calc(100vw - 24px)); }
+.te-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.te-head h2 { margin: 0; }
+.te-head input[type=search] { max-width: 240px; }
+.te-scroll { overflow: auto; max-height: calc(100vh - 260px); border: 1px solid var(--color-border-line); border-radius: 8px; }
+.te-tb { border-collapse: collapse; font-size: 12.5px; min-width: 100%; }
+.te-tb th { position: sticky; top: 0; background: var(--color-panel); text-align: left; font-weight: 600; font-size: 11px;
+  color: var(--color-fg-muted); padding: 6px; border-bottom: 1px solid var(--color-border-line); white-space: nowrap; z-index: 1; }
+.te-tb th.key { color: var(--color-fg); }
+.te-tb th.num { text-align: right; }
+.te-tb td { padding: 1px; border-bottom: 1px solid var(--color-border-line); }
+.te-tb input.te-in { width: 100%; min-width: 90px; box-sizing: border-box; border: 1px solid transparent; background: transparent;
+  color: var(--color-fg); font: inherit; padding: 4px 6px; border-radius: 5px; }
+.te-tb input.te-in:focus { border-color: var(--t-amber, #ff9f0a); background: var(--color-bg); outline: none; }
+.te-tb input.num { text-align: right; font-family: var(--t-mono, monospace); min-width: 70px; }
+.te-tb input.key { font-weight: 650; }
+.te-tb input.ro { color: var(--color-fg-muted); }
+.te-tb input.bad { border-color: var(--color-bad); }
+.te-x { width: 28px; text-align: center; }
+.te-del { border: 0; background: transparent; color: var(--color-fg-muted); font-size: 16px; cursor: pointer; padding: 2px 6px; border-radius: 5px; }
+.te-del:hover { color: var(--color-bad); background: var(--color-bg); }
+
+/* Claude's proposal for a stock's figures (js/stock/engine.js) */
+dialog.cf-dlg { width: min(1000px, calc(100vw - 24px)); }
+.cf-sec { margin: 10px 0 4px; font-size: 13px; font-weight: 650; }
+.cf-tb td.num { text-align: right; font-family: var(--t-mono, monospace); }
+.cf-tb td.src { white-space: normal; max-width: 420px; color: var(--color-fg-muted); }
+.cf-tb input { width: auto; }

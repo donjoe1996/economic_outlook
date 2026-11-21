@@ -335,9 +335,81 @@ function gate(tab, ok, html) {
   Array.prototype.forEach.call(p.children, function (c) { if (c !== g) c.classList.toggle("gated", !ok); });
   return !!ok;
 }
-function fillHint(what) {
-  var url = (metaOf(TK.ds.fund) || {}).sheet_url;
-  return "<b>" + what + "</b> Isi barisnya untuk Kode " + TK.code + " di " + (url ? "<a href=\"" + url + "\" target=\"_blank\" rel=\"noopener\">sheet Saham</a>" : "sheet Saham") + " (atau lewat <b>+ Data</b> di dashboard), lalu klik <b>\u27f3 Tarik</b>. Bisa juga minta Claude: <code>isi data saham " + TK.code + "</code>; Claude mencari angka dari sumber resmi dan mencatat sumbernya.";
+/* What a gated tab needs, and two ways to fill it: Claude (proposal you review
+   first) or the table editor. Buttons are wired below (data-act). */
+function fillHint(what, ds, claude) {
+  ds = ds || TK.ds.fund;
+  var url = (metaOf(ds) || {}).sheet_url;
+  if (!TK.shared) return "<b>" + what + "</b> Isi baris " + TK.code + " lewat <b>Edit tabel</b> di halaman <a href=\"metadata.html\">Metadata</a>.";
+  return "<b>" + what + "</b><div class=\"gate-acts\">" +
+    (claude === false ? "" : "<button type=\"button\" class=\"btn primary\" data-act=\"claude-fill\">✦ Isi dengan Claude</button>") +
+    "<button type=\"button\" class=\"btn\" data-act=\"edit\" data-ds=\"" + ds + "\">Edit tabel</button></div>" +
+    "<div class=\"small muted\">" + (claude === false ? "" : "Claude mencari angka di laporan keuangan emiten (idx.co.id, situs hubungan investor), OJK dan BEI, lalu menunjukkan usulannya beserta sumbernya; tidak ada yang tersimpan sebelum Anda menekan Simpan. ") +
+    "Data tersimpan sebagai JSON di " + (url ? "<a href=\"" + url + "\" target=\"_blank\" rel=\"noopener\">folder Drive</a>" : "folder Drive") + ".</div>";
+}
+document.addEventListener("click", function (e) {
+  var b = e.target.closest && e.target.closest("[data-act]");
+  if (!b || !TK) return;
+  if (b.dataset.act === "claude-fill") claudeFill(b);
+  if (b.dataset.act === "edit" && window.EOTable) window.EOTable.open(b.dataset.ds, { filter: TK.code, onSaved: function () { toast("Tersimpan.", "ok"); window.dash.reload(); } });
+});
+function claudeFill(btn) {
+  if (!window.EOJobs) return;
+  var label = btn.textContent;
+  btn.disabled = true; btn.textContent = "Claude sedang mencari… (1–3 menit)";
+  window.EOJobs.run("/api/stocks/" + encodeURIComponent(TK.code) + "/research", {})
+    .then(function (out) { showProposal(out.result || {}); })
+    .catch(function (err) { toast("Claude: " + (err && err.message || err), "bad"); })
+    .then(function () { btn.disabled = false; btn.textContent = label; });
+}
+/* Claude's proposal: every row with its source, ticked by default; you untick
+   what you don't trust, then save. Built with textContent only (web content). */
+function showProposal(res) {
+  function el(tag, cls, text) { var n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
+  var old = document.getElementById("cf-dlg"); if (old) old.remove();
+  var dlg = el("dialog", "adm-dlg cf-dlg"); dlg.id = "cf-dlg";
+  var rows = res.rows || {}, prop = res.proposal || {};
+  dlg.append(el("h2", null, "Usulan Claude untuk " + TK.code));
+  dlg.append(el("p", "adm-help", "Periksa angka dan sumbernya. Hilangkan centang pada baris yang tidak Anda percayai, lalu simpan. Baris yang sudah ada dengan kunci sama akan diperbarui."));
+  var SECS = [["saham_fund", "Fundamental", ["Kunci", "Nilai", "Periode; sumber"], function (r) { return [r[1], r[3], r[5]]; }],
+              ["saham_fh", "Riwayat akhir tahun", ["Tanggal", "BVPS", "EPS", "DPS", "Sumber"], function (r) { return [r[1], r[2], r[3], r[4], r[5]]; }],
+              ["saham_dv", "Dividen", ["Dibayar", "Tahun buku", "Jenis", "Per saham", "Sumber"], function (r) { return [r[1], r[2], r[3], r[4], r[5]]; }]];
+  var boxes = [];
+  SECS.forEach(function (sec) {
+    var list = rows[sec[0]] || [];
+    if (!list.length) return;
+    dlg.append(el("div", "cf-sec", sec[1] + " (" + list.length + ")"));
+    var wrap = el("div", "adm-scroll"), tb = el("table", "adm-tb cf-tb"), hr = el("tr");
+    hr.append(el("th")); sec[2].forEach(function (h) { hr.append(el("th", null, h)); });
+    var thead = el("thead"); thead.append(hr); tb.append(thead);
+    var tbody = el("tbody");
+    list.forEach(function (r) {
+      var tr = el("tr"), cb = el("input"); cb.type = "checkbox"; cb.checked = true;
+      cb.setAttribute("aria-label", "Simpan baris ini");
+      var td0 = el("td"); td0.append(cb); tr.append(td0);
+      sec[3](r).forEach(function (v, i) { tr.append(el("td", i === sec[2].length - 1 ? "src" : /^-?[\d.]+$/.test(String(v)) ? "num" : "", v)); });
+      tbody.append(tr); boxes.push([sec[0], r, cb]);
+    });
+    tb.append(tbody); wrap.append(tb); dlg.append(wrap);
+  });
+  if (!boxes.length) dlg.append(el("p", "adm-bad", "Claude tidak menemukan angka yang bisa dipakai dengan sumbernya."));
+  if ((prop.not_found || []).length) dlg.append(el("p", "adm-help", "Tidak ditemukan: " + prop.not_found.join(", ") + ". Isi sendiri lewat Edit tabel bila Anda punya sumbernya."));
+  if (res.notes) { var det = el("details", "more"), pre = el("pre", "adm-help", res.notes); pre.style.whiteSpace = "pre-wrap"; det.append(el("summary", null, "Catatan riset Claude"), pre); dlg.append(det); }
+  var err = el("p", "adm-bad"), acts = el("div", "adm-actions"), cancel = el("button", "adm-btn", "Batal"), save = el("button", "adm-btn primary", "Simpan yang dicentang");
+  cancel.type = "button"; save.type = "button"; save.hidden = !boxes.length;
+  cancel.addEventListener("click", function () { dlg.close(); dlg.remove(); });
+  save.addEventListener("click", function () {
+    var pick = {}; boxes.forEach(function (b) { if (b[2].checked) (pick[b[0]] = pick[b[0]] || []).push(b[1]); });
+    save.disabled = true; err.textContent = "";
+    window.EOJobs.run("/api/stocks/" + encodeURIComponent(TK.code) + "/research/save", { rows: pick })
+      .then(function (out) {
+        var n = 0, r = out.result || {}; Object.keys(r).forEach(function (k) { n += r[k]; });
+        dlg.close(); dlg.remove(); toast(n + " sel disimpan untuk " + TK.code + ".", "ok"); window.dash.reload();
+      })
+      .catch(function (e2) { err.textContent = e2.message; save.disabled = false; });
+  });
+  acts.append(cancel, save); dlg.append(err, acts);
+  document.body.append(dlg); dlg.showModal();
 }
 function applyDefaults() {
   function setv(id, v) { if (!vEdited[id] && isFinite(v)) $("#" + id).value = (+v.toFixed(2)); }
@@ -763,7 +835,7 @@ function cumulativeSeries() {
 }
 function renderFlows() {
   if (!S.prices.length) return;
-  if (!gate("flow", FL.rows.length > 0, fillHint("Belum ada baris arus asing untuk " + TK.code + " atau seluruh pasar (Kode PASAR)."))) return;
+  if (!gate("flow", FL.rows.length > 0, fillHint("Belum ada baris arus asing untuk " + TK.code + " atau seluruh pasar (Kode PASAR).", TK.ds.flow, false))) return;
   var me = TK.code, hasPx = pxOK(), sig = flowSignals(), days = dayList(), cs = cumulativeSeries(), wk = fkind("stk_week"), mk = fkind("mkt_week"), n = S.prices.length;
   var oks = sig.list.filter(function (o) { return o.status === "ok"; }), bads = sig.list.filter(function (o) { return o.status === "bad"; }), sc = sig.score;
   function join(a) { return listAnd(a.map(function (o) { return o.short; })); }
@@ -943,7 +1015,7 @@ function dvScenCalc() {
 function renderDividends() {
   if (!S.prices.length) return;
   var D = dvData(), R = D.rows, open = D.open, n = R.length, me = TK.code;
-  if (!gate("div", n >= 2 && isFinite(R[n - 1].eps), fillHint(n < 2 ? "Dividen butuh minimal dua tahun buku dengan dividen final di tab Dividen." : "Dividen butuh laba per saham akhir tahun FY" + R[n - 1].fy + " di tab Riwayat fundamental, untuk menghitung rasio pembayaran."))) return;
+  if (!gate("div", n >= 2 && isFinite(R[n - 1].eps), fillHint(n < 2 ? "Dividen butuh minimal dua tahun buku dengan dividen final di tab Dividen." : "Dividen butuh laba per saham akhir tahun FY" + R[n - 1].fy + " di tab Riwayat fundamental, untuk menghitung rasio pembayaran.", n < 2 ? TK.ds.dv : TK.ds.fh))) return;
   var live = pxOK(), first = R[0], last = R[n - 1], cur = live ? S.prices[S.prices.length - 1] : NaN, asof = live ? S.dates[S.dates.length - 1] : DV.rows[DV.rows.length - 1].t;
   var ttm = 0; DV.rows.forEach(function (r) { if (r.t > asof - 365 * DAY && r.t <= asof) ttm += r.dps; });
   var ups = R.filter(function (y) { return y.g > 0; }), cuts = R.filter(function (y) { return y.g < 0; }), yrs = n - 1;
@@ -1259,7 +1331,7 @@ function updateChrome(res) {
   $("#lastChip").innerHTML = "<b>" + px(last) + "</b> <span class=\"" + (ch >= 0 ? "ok" : "bad") + "\" style=\"color:var(--" + (ch >= 0 ? "ok" : "tail") + ")\">" + spct(ch, 1) + "</span> · " + fmtDay(S.dates[n - 1]);
   var m = metaOf(TK.ds.price), fetched = res.meta && res.meta.fetched_at ? new Date(res.meta.fetched_at) : null;
   $("#labStatus").textContent = TK.code + " · " + n.toLocaleString("id-ID") + " harga harian sampai " + fmtDay(S.dates[n - 1]) + (fetched && !isNaN(fetched) ? " · disalin dari Sheet " + fetched.toLocaleString("id-ID", { dateStyle: "medium", timeStyle: "short" }) : "");
-  if (m.sheet_url) $("#labSheet").href = m.sheet_url;
+  var fu = (window.EO_META || {}).folder_url; if (fu || m.sheet_url) $("#labSheet").href = fu || m.sheet_url;
   var fy0 = FH.rows.length ? new Date(FH.rows[0].t).getUTCFullYear() + 1 : 2017, o0 = document.querySelector("#hWin option[value='0']"); if (o0) o0.textContent = "Semua sejak " + fy0;
 }
 var firstDraw = true;

@@ -15,7 +15,8 @@ import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = ROOT / "config" / "datasets.yaml"
-CACHE_DIR = ROOT / "data" / "cache"
+CACHE_DIR = ROOT / "data" / "cache"          # the old local copy (before the JSON store)
+STORE_DIR = ROOT / "data" / "store"          # local mirror of the Drive data folder
 SECRETS_DIR = ROOT / "secrets"
 CREDENTIALS_PATH = SECRETS_DIR / "credentials.json"
 TOKEN_PATH = SECRETS_DIR / "token.json"
@@ -112,6 +113,17 @@ class Dataset:
     spreadsheet: str = ""             # Google spreadsheet id this dataset lives in
     group: str = "macro"              # which page loads it: macro (dashboard), stock, harga (one stock's prices)
     alias: str = ""                   # the spreadsheet alias it was declared with, if any
+    # Where the data lives:
+    #   store - a JSON file in the data store (Drive folder); edited in the app
+    #   sheet - a feed: read from a Google Sheet tab (GOOGLEFINANCE formulas) on
+    #           each pull and saved into the store; read-only in the app
+    source: str = "store"
+    # Columns the app computes on every write, instead of Sheet formulas:
+    #   {col: I, op: diff, args: [B, C], round: 2}       I = B - C
+    #   {col: J, op: iso_date, args: [A]}                J = date in A as YYYY-MM-DD
+    #   {col: H, op: lookup, args: [A], dataset: flow, key: A, value: B}
+    derived: tuple = ()
+    columns: tuple = ()               # column names for a dataset that never lived in a Sheet
     # ---- publishing schedule, for the metadata page (backend/freshness.py)
     frequency: str = "snapshot"       # monthly | quarterly | irregular | snapshot | static
     lag_days: int = 0                 # days after a period ends until it is usually published
@@ -128,7 +140,11 @@ class Dataset:
 
     @property
     def writable(self) -> bool:
-        return self.kind == "sheet" and self.write != "none"
+        return self.kind == "sheet" and self.write != "none" and self.source == "store"
+
+    @property
+    def is_feed(self) -> bool:
+        return self.kind == "sheet" and self.source == "sheet"
 
 
 @dataclass
@@ -137,6 +153,7 @@ class AppConfig:
     datasets: dict[str, Dataset] = field(default_factory=dict)
     spreadsheets: dict[str, str] = field(default_factory=dict)  # alias -> id
     stocks_legacy: dict[str, dict] = field(default_factory=dict)  # stocks with their own sheets (BMRI)
+    drive_folder: str = ""                                # Google Drive folder that holds the data store
 
     def set_spreadsheet(self, alias: str, sid: str) -> None:
         """Point an alias at a spreadsheet, e.g. right after the app created it."""
@@ -160,6 +177,23 @@ def _parse_key(value: Any) -> tuple[int, ...]:
     return (int(value),)
 
 
+DERIVED_OPS = ("diff", "iso_date", "lookup", "pct_change")
+
+
+def _letter(x) -> int:
+    return col_to_index(str(x).strip().upper()) if not str(x).isdigit() else int(x)
+
+
+def _parse_derived(ds_id: str, d: dict) -> dict:
+    op = d.get("op")
+    if op not in DERIVED_OPS:
+        raise ValueError(f"{ds_id}: derived op must be one of {DERIVED_OPS}")
+    out = {"col": _letter(d["col"]), "op": op, "args": [_letter(a) for a in d.get("args", [])], "round": d.get("round")}
+    if op == "lookup":
+        out.update(dataset=str(d["dataset"]), key=_letter(d.get("key", "A")), value=_letter(d["value"]))
+    return out
+
+
 def load_config(path: Path = CONFIG_PATH, local_path: Path = LOCAL_SPREADSHEETS_PATH) -> AppConfig:
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     sheets = {k: str(v or "") for k, v in (raw.get("spreadsheets") or {}).items()}
@@ -169,14 +203,18 @@ def load_config(path: Path = CONFIG_PATH, local_path: Path = LOCAL_SPREADSHEETS_
             if not sheets.get(k):
                 sheets[k] = str(v)
     cfg = AppConfig(spreadsheet_id=str(raw["spreadsheet_id"]), spreadsheets=sheets,
-                    stocks_legacy={str(k).upper(): dict(v or {}) for k, v in (raw.get("stocks_legacy") or {}).items()})
+                    stocks_legacy={str(k).upper(): dict(v or {}) for k, v in (raw.get("stocks_legacy") or {}).items()},
+                    drive_folder=str((raw.get("store") or {}).get("drive_folder") or ""))
     for ds_id, d in (raw.get("datasets") or {}).items():
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", ds_id):
             raise ValueError(f"Dataset id '{ds_id}' may only use letters, digits, _ and -")
         write = d.get("write", "none")
         if write not in WRITE_MODES:
             raise ValueError(f"{ds_id}: write must be one of {WRITE_MODES}")
-        rng = SheetRange.parse(d["range"]) if d.get("range") else None
+        columns = tuple(str(c) for c in (d.get("columns") or []))
+        # A dataset born in the store has no Sheet range: describe its columns instead.
+        rng = SheetRange.parse(d["range"]) if d.get("range") else (
+            SheetRange(tab=ds_id, first_col=0, last_col=len(columns) - 1, first_row=2, last_row=None) if columns else None)
         if write == "append" and rng and rng.last_row is not None:
             raise ValueError(
                 f"{ds_id}: write: append needs an open-ended range (e.g. PMI!A2:G), "
@@ -187,7 +225,11 @@ def load_config(path: Path = CONFIG_PATH, local_path: Path = LOCAL_SPREADSHEETS_
         if freq not in FREQUENCIES:
             raise ValueError(f"{ds_id}: frequency must be one of {FREQUENCIES}")
         if not rng and not file:
-            raise ValueError(f"{ds_id}: give either range or file")
+            raise ValueError(f"{ds_id}: give range, columns or file")
+        source = str(d.get("source", "store"))
+        if source not in ("store", "sheet"):
+            raise ValueError(f"{ds_id}: source must be store or sheet")
+        derived = tuple(_parse_derived(ds_id, x) for x in (d.get("derived") or []))
         cfg.datasets[ds_id] = Dataset(
             id=ds_id,
             title=d.get("title", ds_id),
@@ -200,6 +242,9 @@ def load_config(path: Path = CONFIG_PATH, local_path: Path = LOCAL_SPREADSHEETS_
             # "spreadsheet:" may be an alias from the spreadsheets: list or a raw id
             spreadsheet=cfg.spreadsheets.get(str(d.get("spreadsheet", "")), str(d.get("spreadsheet") or cfg.spreadsheet_id)),
             alias=str(d.get("spreadsheet", "")) if str(d.get("spreadsheet", "")) in cfg.spreadsheets else "",
+            source=source,
+            derived=derived,
+            columns=columns,
             group=str(d.get("group", "macro")),
             frequency=freq,
             lag_days=int(d.get("lag_days", 0)),

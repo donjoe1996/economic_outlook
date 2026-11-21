@@ -7,7 +7,7 @@ from datetime import date
 
 import pytest
 
-from backend.cache import Cache
+from backend.store import Store
 from backend.config import AppConfig, Dataset, SheetRange, load_config
 from backend.service import Service, UserError, parse_number
 from backend.updaters import fred, periods
@@ -53,18 +53,24 @@ class FakeSheet:
 
 @pytest.fixture
 def setup(tmp_path):
+    """A store as after migration: manual datasets in JSON, one Sheet feed."""
     sheet = FakeSheet()
-    sheet.set_rows("PMI", 1, [["Periode", "PMI", "Unit"], ["Agu'26", "49.8", "indeks"], ["Sep'26", "52.4", "indeks"]])
-    sheet.set_rows("Arus", 1, [["Periode", "SBN", "Unit", "Catatan", "Saham (rumus)"],
-                               ["Okt'25", "", "Rp T", "BELUM DIISI", "12.96"],
-                               ["Nov'25", "", "Rp T", "BELUM DIISI", "12.2"],
-                               ["Des'25", "", "Rp T", "BELUM DIISI", "12.24"]])
+    sheet.set_rows("Feed", 1, [["Periode", "Harga"], ["Agu'26", "100"], ["Sep'26", "101"]])
     cfg = AppConfig(spreadsheet_id="x", datasets={
         "pmi": Dataset("pmi", "PMI", range=SheetRange.parse("PMI!A2:C"), write="append"),
-        "rot": Dataset("rot", "Rotasi", range=SheetRange.parse("Arus!A2:E4"), write="fill"),
-        "ro": Dataset("ro", "Read only", range=SheetRange.parse("PMI!A2:C"), write="none"),
+        "flow": Dataset("flow", "Arus saham", range=SheetRange.parse("Arus!A17:B19"), write="fill"),
+        # rot column E = the stock flow of the same month (was a Sheet formula)
+        "rot": Dataset("rot", "Rotasi", range=SheetRange.parse("Arus!A2:E4"), write="fill",
+                       derived=({"col": 4, "op": "lookup", "args": [0], "dataset": "flow", "key": 0, "value": 1, "round": None},)),
+        "ro": Dataset("ro", "Feed harga", range=SheetRange.parse("Feed!A2:B"), write="none", source="sheet"),
     })
-    svc = Service(cfg, Cache(tmp_path), sheet)
+    store = Store(tmp_path)
+    store.put("pmi", header=["Periode", "PMI", "Unit"], values=[["Agu'26", "49.8", "indeks"], ["Sep'26", "52.4", "indeks"]], source="migration")
+    store.put("flow", header=["Periode", "Saham"], values=[["Okt'25", "12.96"], ["Nov'25", "12.2"], ["Des'25", "12.24"]], source="migration")
+    store.put("rot", header=["Periode", "SBN", "Unit", "Catatan", "Saham"],
+              values=[["Okt'25", "", "Rp T", "BELUM DIISI", "12.96"], ["Nov'25", "", "Rp T", "BELUM DIISI", "12.2"],
+                      ["Des'25", "", "Rp T", "BELUM DIISI", "12.24"]], source="migration")
+    svc = Service(cfg, store, sheet)
     svc.refresh()
     return svc, sheet
 
@@ -72,28 +78,32 @@ def setup(tmp_path):
 def test_append_new_period_goes_below_last_row(setup):
     svc, sheet = setup
     r = svc.upsert("pmi", ["Okt'26", "51.1", "indeks"])
-    assert r == {"action": "append", "sheet_row": 4, "cells_written": 3}
-    assert svc.cache.get("pmi")["values"][-1] == ["Okt'26", "51.1", "indeks"]
+    assert r == {"action": "append", "sheet_row": 3, "cells_written": 3}
+    assert svc.store.get("pmi")["values"][-1] == ["Okt'26", "51.1", "indeks"]
+    assert svc.store.typed("pmi")["rows"][-1] == ["Okt'26", 51.1, "indeks"]   # stored as a number
+    assert sheet.writes == []                                                  # Sheets never written
 
 
 def test_existing_period_updates_only_changed_cells(setup):
-    svc, sheet = setup
-    r = svc.upsert("pmi", ["sep'26 ", "52.5", ""])  # key match ignores case/spaces
+    svc, _ = setup
+    r = svc.upsert("pmi", ["sep'26 ", "52.5", ""])  # key match ignores case/spaces; blank = keep
     assert r["action"] == "update" and r["cells_written"] == 1
-    assert sheet.writes[-1] == {"'PMI'!B3": "52.5"}
+    assert svc.store.get("pmi")["values"][1] == ["Sep'26", "52.5", "indeks"]
 
 
 def test_same_value_is_not_rewritten(setup):
-    svc, sheet = setup
+    svc, _ = setup
+    before = svc.store.path("pmi.json").read_bytes()
     assert svc.upsert("pmi", ["Sep'26", "52.40"])["action"] == "unchanged"
-    assert sheet.writes == []
+    assert svc.store.path("pmi.json").read_bytes() == before
 
 
-def test_fill_writes_blank_cell_and_keeps_formula_column(setup):
-    svc, sheet = setup
-    svc.upsert("rot", ["Nov'25", "3.5", "", "OJK", ""])
-    written = sheet.writes[-1]
-    assert written == {"'Arus'!B3": "3.5", "'Arus'!D3": "OJK"}  # column E (formula) untouched
+def test_fill_updates_row_and_derived_column_follows_its_source(setup):
+    svc, _ = setup
+    svc.upsert("rot", ["Nov'25", "3.5", "", "OJK", "999"])     # the 999 for the derived column is ignored
+    assert svc.store.get("rot")["values"][1] == ["Nov'25", "3.5", "Rp T", "OJK", "12.2"]
+    svc.upsert("flow", ["Nov'25", "13"])                       # source changes -> derived column follows
+    assert svc.store.get("rot")["values"][1][4] == "13"
 
 
 def test_fill_refuses_unknown_period(setup):
@@ -112,6 +122,25 @@ def test_read_only_and_missing_key_and_bad_numbers(setup):
         svc.upsert("pmi", ["Okt'26", "naik"])
     with pytest.raises(UserError, match="titik untuk desimal"):
         svc.upsert("pmi", ["Okt'26", "51,2"])
+
+
+def test_feed_is_pulled_from_the_sheet_into_the_store(setup):
+    svc, _ = setup
+    assert svc.store.typed("ro")["rows"] == [["Agu'26", 100], ["Sep'26", 101]]
+    assert svc.snapshot(None, ["ro"])["ro"]["answer"]["values"] == [["Agu'26", 100], ["Sep'26", 101]]
+
+
+def test_save_table_checks_keys_and_types_and_drops_blank_rows(setup):
+    svc, _ = setup
+    out = svc.save_table("pmi", [["Jul'26", "48", "indeks"], ["Agu'26", "49.8", "indeks"], ["", "", ""]])
+    assert out == {"rows": 2, "before": 2}
+    assert [r[0] for r in svc.store.get("pmi")["values"]] == ["Jul'26", "Agu'26"]   # Sep'26 deleted
+    with pytest.raises(UserError, match="dua kali"):
+        svc.save_table("pmi", [["Jul'26", "48"], ["jul'26", "49"]])
+    with pytest.raises(UserError, match="Baris 1: .*bukan angka"):
+        svc.save_table("pmi", [["Jul'26", "tinggi"]])
+    with pytest.raises(UserError, match="hanya-baca"):
+        svc.save_table("ro", [["Okt'26", "1"]])
 
 
 def test_parse_number():
@@ -157,8 +186,12 @@ def test_period_labels_round_trip():
 
 
 # ---------------------------------------------------------------- progress
-def test_refresh_reports_batches(setup):
-    svc, sheet = setup
+def test_refresh_reports_batches(tmp_path):
+    sheet = FakeSheet()
+    cfg = AppConfig(spreadsheet_id="x", datasets={
+        k: Dataset(k, t, range=SheetRange.parse(f"{k}!A2:B"), source="sheet")
+        for k, t in (("a", "PMI"), ("b", "Rotasi"), ("c", "Read only"))})
+    svc = Service(cfg, Store(tmp_path), sheet)
     from backend.jobs import Job
     job = Job(id="1", kind="refresh", title="t")
     svc.refresh(progress=job, batch=2)
@@ -211,11 +244,11 @@ def two_books(tmp_path):
     sheet.set_rows("PMI", 1, [["Periode", "PMI"], ["Sep'26", "52.4"]])
     sheet.set_rows("Dividen", 1, [["Tanggal", "FY", "Jenis", "DPS"], ["2026-05-11", "2025", "final", "376.96"]])
     cfg = AppConfig(spreadsheet_id="main", datasets={
-        "pmi": Dataset("pmi", "PMI", range=SheetRange.parse("PMI!A2:B"), write="append", spreadsheet="main"),
-        "dv": Dataset("dv", "Dividen", range=SheetRange.parse("Dividen!A2:D"), write="append",
-                      key=(0, 2), value_col=3, spreadsheet="stockbook", group="stock"),
+        "pmi": Dataset("pmi", "PMI", range=SheetRange.parse("PMI!A2:B"), spreadsheet="main", source="sheet"),
+        "dv": Dataset("dv", "Dividen", range=SheetRange.parse("Dividen!A2:D"),
+                      key=(0, 2), value_col=3, spreadsheet="stockbook", group="stock", source="sheet"),
     })
-    svc = Service(cfg, Cache(tmp_path), sheet)
+    svc = Service(cfg, Store(tmp_path), sheet)
     svc.refresh()
     return svc, sheet
 
@@ -235,10 +268,3 @@ def test_snapshot_filters_by_group_and_extra_ids(two_books):
     assert set(svc.snapshot("stock", ["pmi"])) == {"dv", "pmi"}
     assert set(svc.snapshot("macro")) == {"pmi"}
     assert "stockbook" in svc.snapshot("stock")["dv"]["sheet_url"]
-
-
-def test_upsert_writes_to_the_datasets_own_spreadsheet(two_books):
-    svc, sheet = two_books
-    sheet.calls.clear()
-    svc.upsert("dv", ["2026-10-02", "2026", "interim", "66"])
-    assert ("stockbook", "write") in sheet.calls and ("main", "write") not in sheet.calls

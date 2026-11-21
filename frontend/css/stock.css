@@ -132,3 +132,6 @@ main.lab.adding > :not(.lab-head):not(#addStock) { display: none !important; }
 /* a tab whose rows are not filled yet shows only its note */
 .gated { display: none !important; }
 .gate { border-style: solid; border-color: var(--line); background: var(--panel); line-height: 1.55; }
+
+.gate .gate-acts { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 8px; }
+.gate .btn.primary { background: var(--t-amber); border-color: var(--t-amber); color: #000; }

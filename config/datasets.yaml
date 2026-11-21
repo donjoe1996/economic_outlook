@@ -34,7 +34,13 @@
 # frontend/js/data/loaders.js + a drawing in frontend/js/sections/.
 # ---------------------------------------------------------------------------
 
-spreadsheet_id: "1L5maHUBilVeH5Uf3IOKJ4A1dHLWr8IqeyXqHE-UbEyw"   # the default (main) spreadsheet
+spreadsheet_id: "1L5maHUBilVeH5Uf3IOKJ4A1dHLWr8IqeyXqHE-UbEyw"
+
+# Where the data lives: one typed JSON file per dataset in this Google Drive
+# folder, mirrored in data/store/ (backend/store.py). The app reads the local
+# copy; "Tarik" syncs both ways. Sheets are only read for feeds (below).
+store:
+  drive_folder: "1KSsxkNzN4GhY9Xl1L6bdsqv8-I8hi2VI"   # the default (main) spreadsheet
 
 # Other spreadsheets, by a short name. A dataset picks one with
 # "spreadsheet: <name>"; without it, the main spreadsheet above is used.
@@ -126,6 +132,8 @@ datasets:
     release: "Rumus GOOGLEFINANCE di Sheet; rata-rata tersedia saat bulan berakhir"
     note: "Range tetap (A2:G13): perlebar range di config setelah baris bulan baru lengkap."
     write: fill
+    # feed: GOOGLEFINANCE formulas in the Sheet; copied into the store on each pull, read-only here
+    source: sheet
 
   # ---------------- Foreign money (several tables stacked in one tab) --------
   flow:
@@ -148,6 +156,9 @@ datasets:
     release_url: "https://ojk.go.id/id/berita-dan-kegiatan/siaran-pers/default.aspx"
     note: "Kolom B (SBN) yang dihitung kosongnya."
     write: fill
+    # column H = the stock flow of the same month, from the flow dataset (was =B17 in the Sheet)
+    derived:
+      - {col: H, op: lookup, args: [A], dataset: flow, key: A, value: B}
 
   srbi:
     title: Kepemilikan asing di SRBI
@@ -276,6 +287,8 @@ datasets:
     lag_days: 1
     release: "Rumus GOOGLEFINANCE; salin baris rumus ke bawah tiap bulan"
     write: none
+    # feed: GOOGLEFINANCE formulas in the Sheet; copied into the store on each pull, read-only here
+    source: sheet
 
   tambang:
     title: Harga saham tambang bulanan
@@ -285,6 +298,8 @@ datasets:
     lag_days: 1
     release: "Rumus GOOGLEFINANCE; salin baris rumus ke bawah tiap bulan"
     write: none
+    # feed: GOOGLEFINANCE formulas in the Sheet; copied into the store on each pull, read-only here
+    source: sheet
 
   sahamasia:
     title: Saham Asia bulanan
@@ -294,6 +309,8 @@ datasets:
     lag_days: 1
     release: "Rumus GOOGLEFINANCE; salin baris rumus ke bawah tiap bulan"
     write: none
+    # feed: GOOGLEFINANCE formulas in the Sheet; copied into the store on each pull, read-only here
+    source: sheet
 
   sahamglobal:
     title: Saham global bulanan
@@ -304,6 +321,8 @@ datasets:
     release: "Rumus GOOGLEFINANCE; salin baris rumus ke bawah tiap bulan"
     note: "CSI 300 tidak punya data Okt'25 di Google Finance, jadi perubahannya dihitung sejak Nov'25."
     write: none
+    # feed: GOOGLEFINANCE formulas in the Sheet; copied into the store on each pull, read-only here
+    source: sheet
 
   sektor:
     title: Komposisi IHSG per sektor
@@ -324,6 +343,10 @@ datasets:
     release: "Kutipan berita/data harian, tidak terjadwal"
     release_url: "https://www.investing.com/rates-bonds/indonesia-10-year-bond-yield-historical-data"
     write: append
+    # columns the app computes (were Sheet formulas): spread = SBN - UST, ISO date of column A
+    derived:
+      - {col: I, op: diff, args: [B, C], round: 2}
+      - {col: J, op: iso_date, args: [A]}
 
   valuasi:
     title: Valuasi IHSG (PER, PBV)
@@ -405,6 +428,8 @@ datasets:
     frequency: "irregular"
     stale_after_days: 5
     release: "Rumus GOOGLEFINANCE, otomatis tiap hari bursa"
+    # feed: GOOGLEFINANCE formulas in the Sheet; copied into the store on each pull, read-only here
+    source: sheet
 
   bmri_fund:
     title: BMRI fundamental terkini
@@ -465,6 +490,8 @@ datasets:
     frequency: "irregular"
     stale_after_days: 5
     release: "Rumus GOOGLEFINANCE, otomatis tiap hari bursa"
+    # feed: GOOGLEFINANCE formulas in the Sheet; copied into the store on each pull, read-only here
+    source: sheet
 
   bank_peers_fund:
     title: Bank pembanding, fundamental

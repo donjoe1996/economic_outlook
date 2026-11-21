@@ -3,7 +3,7 @@ from datetime import date
 
 import pytest
 
-from backend.cache import Cache
+from backend.store import Store as Cache
 from backend.config import AppConfig, Dataset, SheetRange
 from backend.freshness import assess, parse_period
 from backend.jobs import Job
@@ -86,7 +86,7 @@ class FlakySheet:
 def test_one_failing_tab_does_not_stop_the_pull(tmp_path, monkeypatch):
     monkeypatch.setattr("backend.service.with_retry", lambda fn, **kw: fn())  # no waiting in tests
     cfg = AppConfig("x", {
-        k: Dataset(k, k, range=SheetRange.parse(f"{k}!A2:B"), write="append") for k in ("A", "Bad", "C")
+        k: Dataset(k, k, range=SheetRange.parse(f"{k}!A2:B"), write="none", source="sheet") for k in ("A", "Bad", "C")
     })
     cache = Cache(tmp_path)
     cache.put("Bad", range_a1="'Bad'!A2:B", header=[], values=[["Agu'26", "old"]], source="sheet")

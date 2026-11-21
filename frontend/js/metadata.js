@@ -82,13 +82,17 @@
     const sheetLink = safeUrl(d.sheet_link);
     const rel = safeUrl(d.release_url);
     const actions = [];
-    if (d.kind === 'sheet') actions.push(el('button', { type: 'button', class: 'adm-btn md-act', onclick: (e) => pullOne(d, e.currentTarget) }, ['Tarik ulang']));
-    if (d.write === 'append' || d.write === 'fill') actions.push(el('a', { class: 'adm-btn md-act', href: 'index.html#add=' + encodeURIComponent(d.id) }, ['Isi data']));
+    const reload = () => { toast(d.title + ' disimpan.', 'ok'); load(); };
+    if (d.kind === 'sheet' && d.editable) actions.push(el('button', { type: 'button', class: 'adm-btn md-act primary', onclick: () => EOTable.open(d.id, { onSaved: reload }) }, ['Edit tabel']));
+    else if (d.kind === 'sheet') actions.push(el('button', { type: 'button', class: 'adm-btn md-act', onclick: () => EOTable.open(d.id) }, ['Lihat']));
+    if (d.source === 'sheet') actions.push(el('button', { type: 'button', class: 'adm-btn md-act', onclick: (e) => pullOne(d, e.currentTarget) }, ['Tarik harga']));
     return el('tr', { class: 'md-row st-' + d.status }, [
       el('td', { 'data-h': 'Status' }, [el('span', { class: 'md-badge ' + st.cls, text: st.label })]),
       el('td', { 'data-h': 'Dataset' }, [
         el('b', { text: d.title }),
-        el('div', { class: 'md-small' }, [el('code', { text: d.id }), ' · ', FREQ[d.frequency] || d.frequency, d.range ? ' · ' : '', d.range ? (sheetLink ? el('a', { href: sheetLink, target: '_blank', rel: 'noopener', text: d.range }) : d.range) : '']),
+        el('div', { class: 'md-small' }, [el('code', { text: d.id + (d.kind === 'sheet' ? '.json' : '') }), ' · ', FREQ[d.frequency] || d.frequency, ' · ',
+          d.source === 'sheet' ? (sheetLink ? el('a', { href: sheetLink, target: '_blank', rel: 'noopener', text: 'feed: ' + d.range }) : 'feed: ' + d.range)
+            : d.kind === 'sheet' ? (sheetLink ? el('a', { href: sheetLink, target: '_blank', rel: 'noopener', text: 'Drive' }) : 'lokal') : 'file']),
       ]),
       el('td', { 'data-h': 'Data terakhir', text: d.latest || '–' }),
       el('td', { 'data-h': 'Seharusnya ada', text: d.expected || (d.stale_after_days ? 'maks. ' + d.stale_after_days + ' hari' : '–') }),
@@ -99,7 +103,7 @@
       ]),
       el('td', { 'data-h': 'Diperbarui' }, [
         el('div', { text: d.changed_at ? 'Isi berubah ' + when(d.changed_at) : '–' }),
-        el('div', { class: 'md-small', text: d.fetched_at ? 'Ditarik ' + when(d.fetched_at) + (d.source === 'xlsx-import' ? ' (dari .xlsx)' : '') : '' }),
+        el('div', { class: 'md-small', text: d.fetched_at ? 'Disimpan ' + when(d.fetched_at) : '' }),
       ]),
       el('td', { 'data-h': 'Sumber rilis' }, [
         el('div', { text: d.release || '–' }),
@@ -111,7 +115,34 @@
     ]);
   }
 
+  // Where the data lives, and whether this computer and Drive agree.
+  function storeBar() {
+    const s = data.store || {}, url = safeUrl(s.folder_url), n = (s.dirty || []).length;
+    const state = !s.synced_at ? ['warn', 'Belum pernah sinkron dengan Drive'] : n ? ['warn', n + ' file belum diunggah ke Drive'] : ['ok', 'Sama dengan Drive'];
+    $('#md-store').replaceChildren(
+      el('div', { class: 'md-store-main' }, [
+        el('span', { class: 'md-badge ' + state[0], text: state[1] }),
+        el('span', { text: ' ' + s.files + ' file JSON' + (s.synced_at ? ' · sinkron terakhir ' + when(s.synced_at) : '') }),
+        url ? el('a', { href: url, target: '_blank', rel: 'noopener', class: 'md-small', text: ' · buka folder Drive ↗' }) : null,
+      ]),
+      el('button', { type: 'button', class: 'adm-btn', id: 'md-sync', onclick: syncNow }, ['Sinkron sekarang']),
+    );
+    if (url) $('#md-sheet').href = url;
+  }
+
+  async function syncNow(e) {
+    const btn = e.currentTarget; btn.disabled = true;
+    try {
+      const out = await EOJobs.run('/api/sync');
+      const r = out.result || {}, up = ((r.push || {}).uploaded || []).length, down = ((r.pull || {}).downloaded || []).length;
+      toast('Sinkron selesai: ' + down + ' diunduh, ' + up + ' diunggah.', out.warnings.length ? 'warn' : 'ok');
+    } catch (err) { toast(err.message, 'bad'); }
+    btn.disabled = false;
+    load();
+  }
+
   function render() {
+    storeBar();
     tiles();
     filters();
     const list = data.datasets.filter((d) => filter === 'all' || (STATUS[d.status] || {}).group === filter);
@@ -122,7 +153,7 @@
     try {
       data = await EOJobs.api('GET', '/api/metadata');
       $('#md-asof').textContent = 'Dihitung per ' + day(data.today) + ' dari salinan lokal';
-      if (safeUrl(data.sheet_url)) $('#md-sheet').href = data.sheet_url;
+
       render();
     } catch (e) {
       $('#md-body').replaceChildren(el('tr', {}, [el('td', { colspan: '8', class: 'md-empty', text: 'Gagal memuat: ' + e.message })]));
@@ -134,7 +165,7 @@
     $('#md-refresh').addEventListener('click', async () => {
       try {
         const out = await EOJobs.run('/api/refresh');
-        toast(Object.keys(out.result.rows).length + ' dataset ditarik' + (out.warnings.length ? ', ' + out.warnings.length + ' dilewati.' : '.'), out.warnings.length ? 'warn' : 'ok');
+        toast(Object.keys(out.result.rows || {}).length + ' feed harga ditarik, data disinkron dengan Drive' + (out.warnings.length ? '; ' + out.warnings.length + ' catatan.' : '.'), out.warnings.length ? 'warn' : 'ok');
       } catch (e) { toast(e.message, 'bad'); }
       load();
     });

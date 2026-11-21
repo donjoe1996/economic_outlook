@@ -1,27 +1,30 @@
 # Indonesia Economic Outlook — local app
 
 A local, full-stack version of the *Indonesia Economic Outlook* dashboard.
-Google Sheets stays the single source of truth; the app reads it, keeps a
-local copy so it opens offline, and writes new data back to it.
+The data lives as **typed JSON files in a Google Drive folder** (one file per
+dataset). The app keeps a local mirror so it opens instantly and works
+offline, edits data in the app, and syncs both ways. Google Sheets are used
+only for what they are good at: `GOOGLEFINANCE` price feeds.
 
 ```
-            ┌──────────── your computer ─────────────────────────────┐
-            │                                                        │
- Google  ◄──┼── backend (Python, FastAPI)  ◄── frontend (HTML + D3)  │
- Sheet   ──►│     • reads ranges listed in      • the prototype's    │
-            │       config/datasets.yaml          charts, unchanged  │
-            │     • local copy in data/cache    • toolbar: refresh,  │
- FRED   ───►│     • writes rows you confirm       add data, updaters │
- (auto)     │                                                        │
-            └────────────────────────────────────────────────────────┘
+              ┌──────────── your computer ───────────────────────────────┐
+ Google   ◄──►│ backend (Python, FastAPI)        frontend (HTML + D3)    │
+ Drive        │  • data/store/: one JSON per  ──► • dashboard, stock     │
+ (JSON files) │    dataset, synced by md5         pages, metadata page   │
+              │  • edits from forms, the table  ◄─ • table editor, forms │
+ Google   ───►│    editor, updaters, Claude       • Claude buttons       │
+ Sheets       │  • price feeds copied on pull                            │
+ (prices)     │                                                          │
+ FRED     ───►│  • Claude API: insights, stock research                  │
+              └──────────────────────────────────────────────────────────┘
 ```
 
 ## Three layers, three questions
 
 | Layer | Question it answers | Where |
 |---|---|---|
-| **Data source** | Which tab and cells hold each indicator? May the app write there? | `config/datasets.yaml` |
-| **Data shape** | How do raw Sheet rows become named columns (`month`, `pmi`, …)? | `frontend/js/data/loaders.js` |
+| **Data source** | Which datasets exist, which are price feeds, how they may be edited | `config/datasets.yaml` |
+| **Data shape** | How do stored rows become named columns (`month`, `pmi`, …)? | `frontend/js/data/loaders.js` |
 | **Drawing** | How is a dataset shown (chart, KPI, verdict)? | `frontend/js/sections/*.js` |
 
 The layers only meet through `dash.data('<id>')`. That's what makes the app
@@ -60,7 +63,64 @@ Read it top-down:
 - The look lives in `frontend/css/terminal.css` (tokens at the top) and the
   behaviour in `frontend/js/terminal.js`. Chart code is unchanged.
 
-## Connect Google Sheets (one time, about 10 minutes)
+## Where the data lives
+
+| What | Where | Edited by |
+|---|---|---|
+| Every dataset (PMI, BI Rate, flows, stock fundamentals, dividends, …) | one JSON file each in the Drive folder set under `store: drive_folder:` in `config/datasets.yaml`, mirrored in `data/store/` | the app: **＋ Data** form, **Edit tabel** on the Metadata page, FRED updater, Claude buttons |
+| Prices (IHSG, sectors, global indices, every stock) | Google Sheets with `GOOGLEFINANCE` formulas (`source: sheet` in the YAML) | Google, automatically; copied into the store on every **⟳ Tarik** |
+| Map shapes | `data/files/` in this repo | nobody (static) |
+
+**The file format.** Each `<id>.json` holds a schema (column names and types:
+`number`, `date`, `string`) and the rows as arrays, in the open
+[Table Schema / Data Package](https://specs.frictionlessdata.io/) layout.
+`datapackage.json` indexes every file with its row count and md5 hash.
+Compared with reading Sheets, this changes three things:
+
+- Values are **typed**: `16520.03` is a number, Google Finance's `11/20/2026
+  16:00:00` is stored as `2026-11-20`, and an empty cell is `null`. No more
+  guessing whether `93.333` means 93 or 93 thousand.
+- **Calculated columns are rules, not formulas.** For example, the SBN spread
+  (`= SBN − UST`) and the rotation table's stock-flow column (copied from the
+  flow table) are declared under `derived:` in the YAML and recomputed on
+  every save.
+- **It's fast.** The page's data request dropped from ~1 MB to ~22 KB
+  (compressed, about 40 ms locally). Map shapes are served once and then
+  cached by the browser.
+
+**Sync.** **⟳ Tarik** does three things in order:
+
+1. **Download from Drive.** One folder listing, then only the files whose md5
+   differs from the last sync.
+2. **Pull the price feeds.** The current prices come from the Sheets into the
+   store.
+3. **Upload to Drive.** Only what changed here is uploaded.
+
+Saves upload right away. The Metadata page shows *"Sama dengan Drive"* (in
+sync) or which files still need uploading, and has a **Sinkron sekarang**
+(sync now) button.
+
+If a file changed both on Drive and here since the last sync, Drive wins. The
+local version is kept next to it as `<id>.local-<time>.json`, so nothing is
+lost. Downloads and uploads are checked against Drive's md5 before they
+replace anything.
+
+**Moving from the Sheet-based version (once):**
+
+1. In the old version, click **⟳ Tarik** once, so the local copy has your
+   latest Sheet edits.
+2. In Google Cloud, enable the **Google Drive API** too (Part A, step 2
+   below).
+3. Update the code and restart. The first start converts the old
+   `data/cache/` into `data/store/` (offline; nothing is overwritten).
+4. Click **Hubungkan Google** again and approve **Drive** access. The toolbar
+   says *"Google: perlu izin Drive"* (Drive permission needed) until you do.
+5. Click **⟳ Tarik**. The first sync uploads every file to the Drive folder.
+
+Your Sheets stay as they were. The price tabs keep feeding the app; the
+manual tabs become a read-only archive.
+
+## Connect Google (one time, about 10 minutes)
 
 The app signs in **as you** (OAuth). That needs two files:
 
@@ -79,8 +139,9 @@ same settings under *APIs & Services → OAuth consent screen / Credentials*.
    account that owns the Sheet. Open the project picker (top bar), click
    **New project**, name it e.g. `economic-outlook`, and click **Create**.
    Check that the top bar shows this project.
-2. **Sheets API.** Go to Menu ☰ → *APIs & Services* → **Library**. Search
-   for **Google Sheets API** and click **Enable**.
+2. **Sheets and Drive APIs.** Go to Menu ☰ → *APIs & Services* →
+   **Library**. Search for **Google Sheets API** and click **Enable**. Then
+   do the same for **Google Drive API** (the data store is a Drive folder).
 3. **Google Auth Platform.** Search for "Google Auth Platform" in the top
    bar, or find it under *APIs & Services*. The left menu shows
    *Overview, Branding, Audience, Clients, Data Access, Verification Center, Settings*.
@@ -110,11 +171,14 @@ same settings under *APIs & Services → OAuth consent screen / Credentials*.
 3. *"Google hasn't verified this app"* is expected for a personal app that
    nobody has reviewed. Click **Advanced** →
    **Go to economic-outlook (unsafe)**.
-4. On the permissions screen, **tick the Google Sheets checkbox**, then
-   click **Continue**. If it stays unticked, sign-in "succeeds" but every
-   read fails with a permission error.
-5. The progress panel shows *Membaca dari Google Sheet … 0/27 → 27/27*
-   (reading from Google Sheet), and the charts fill in.
+4. On the permissions screen, **tick both the Google Sheets and the Google
+   Drive checkboxes**, then click **Continue**. If one stays unticked,
+   sign-in "succeeds" but reads fail with a permission error. Google asks
+   for access to your whole Drive because that is how its permissions are
+   cut, but the app only reads and writes inside the data folder named in
+   the YAML.
+5. The progress panel shows the sync with Drive and the price feeds, and the
+   charts fill in.
 
 `secrets/` is git-ignored, so it never goes to GitHub. To sign out, delete
 `secrets/token.json`.
@@ -143,41 +207,46 @@ local folder (e.g. `~/Projects/economic_outlook`) is safer.
 
 | Toolbar button | What happens |
 |---|---|
-| **Tarik dari Sheet** | Reads every dataset from the Sheet into `data/cache/` |
-| **Tambah / perbarui data** | Form built from the Sheet's own headers. A new period is added at the bottom; an existing period gets only the cells you filled in |
-| **Cek data baru otomatis** | Asks the official sources (FRED for now) for periods newer than the Sheet's. Shows them first and writes only the rows you tick |
+| **⟳ Tarik** | Syncs with the Drive folder and copies the latest prices from the feed Sheets (see *Where the data lives*) |
+| **＋ Data** | Form built from each dataset's columns. A new period is added at the bottom; an existing period gets only the cells you filled in |
+| **Edit tabel** (Metadata page) | The whole dataset as an editable table: change cells, add or delete rows, with type checks. Price feeds open read-only |
+| **Cek data baru otomatis** | Asks the official sources (FRED for now) for periods newer than the stored ones. Shows them first and saves only the rows you tick |
 | **Sumber data** | Every dataset, its range, its write mode, and when it was pulled |
 | **Aktivitas** | Recent jobs with every step and how long it took |
 | **Metadata** | Opens the Metadata page (below) |
 
 Slow actions run as **background jobs** on the server (`backend/jobs.py`).
 The page shows a progress bar under the toolbar: the current step, how many
-datasets are done (the Sheet is read in batches of 4), and the elapsed time.
+files or feeds are done, and the elapsed time.
 *Rincian* lists every step. If you reload the page mid-job, the progress
 panel picks the job back up.
 
 Each dataset has a **write mode** in `datasets.yaml`:
 
-- `append`: the tab holds one table, so new periods go below the last row.
-- `fill`: the tab stacks several tables, so the app only fills rows that
-  already exist (e.g. the empty Apr'26 foreign flow), or it would overwrite
-  the next table.
-- `none`: read-only. Use it for formula-driven tabs (the `GOOGLEFINANCE`
-  stock tabs) and one-off snapshots.
+- `append`: new periods may be added.
+- `fill`: only existing periods may be filled (a fixed table, e.g. the
+  Okt'25–Sep'26 foreign-flow months). New rows go in through **Edit tabel**.
+- `none`: read-only (one-off snapshots).
 
-The app writes only the cells you filled in, one by one. A formula in another
-column of the same row (e.g. column H in the SBN table) is never overwritten.
+Price feeds (`source: sheet`) are always read-only in the app. Every save
+checks the key columns (present, not duplicated) and that number columns get
+numbers, then recomputes the `derived:` columns.
 
 ## Metadata page: what is current, what needs updating
 
 `metadata.html` (toolbar: **Metadata**) lists every dataset with:
 
-- the **newest period in your Sheet** vs the **newest period that should be
+- the **newest stored period** vs the **newest period that should be
   published by now**;
 - **blank periods** (e.g. Apr'26 foreign flow);
 - when its content **last changed**, when it was **last pulled**, and whether
   the last pull or automatic check **failed**;
-- links to the exact Sheet tab and to the publisher's release page.
+- links to the Drive folder (or, for price feeds, the exact Sheet tab) and to
+  the publisher's release page;
+- **Edit tabel** to edit the dataset in place (**Lihat**, view only, for
+  price feeds);
+- at the top, whether this computer and Drive agree, with a **Sinkron
+  sekarang** (sync now) button.
 
 The idea behind "should be published by now": a figure for period P can only
 exist after P ends *and* the publisher has had time to release it. So each
@@ -269,10 +338,10 @@ like the macro datasets (`group: stock` in `config/datasets.yaml`):
 | `bank_peers_fund` | bank peers → `Fundamental` | one row per bank |
 | `cpi` | main → `IHK` | BPS consumer price index, for "in today's rupiah" |
 
-New tabs were added *after* the existing first tab in each stock spreadsheet,
-so anything that exports only the first tab keeps working. Add a dividend,
-a flow figure or a new fundamental row in the Sheet (or through **+ Data**),
-then press **⟳ Tarik** on the stock page.
+BMRI's tables came from its own spreadsheets and now live in the data store
+like everything else. To add a dividend, a flow figure or a fundamental row,
+use **Edit tabel** on the Metadata page (or **＋ Data**); the stock page shows
+it on the next load.
 
 ### Any other stock: type its code
 
@@ -280,22 +349,30 @@ Type a code in the **Ketik kode** box under the stock cards (or in the command
 bar, e.g. `tlkm`). A stock that isn't on the list yet opens a short form:
 name, sector (bank or other) and up to five peers. **Tambahkan** then:
 
-1. creates a spreadsheet **IEO Saham** in your Google Drive the first time
-   (its id is kept in `data/spreadsheets.local.json`; put an id under
-   `spreadsheets: saham:` in the YAML to use one you already have);
-2. writes the stock in the **Daftar** tab;
-3. adds a **Harga KODE** tab for it and each peer, with a daily
-   `GOOGLEFINANCE("IDX:KODE", ...)` formula since 2016;
-4. adds labelled, empty rows for it in **Fundamental** (bank and other sectors
+1. writes the stock in the **Daftar** table (data store);
+2. adds a **Harga KODE** tab for it and each peer to the price-feed
+   spreadsheet, with a daily `GOOGLEFINANCE("IDX:KODE", ...)` formula since
+   2016. The spreadsheet is created in your Drive the first time; its id is
+   kept in `data/spreadsheets.local.json`, or set it under
+   `spreadsheets: saham:` in the YAML. An existing *IEO Saham* sheet keeps
+   serving its price tabs;
+3. adds labelled, empty rows for it in **Fundamental** (bank and other sectors
    get different keys);
-5. copies the whole-market foreign-flow rows (Kode `PASAR`) once from BMRI's
-   flow tab, so every stock has the market context.
+4. copies the whole-market foreign-flow rows (Kode `PASAR`) once from BMRI's
+   flow data, so every stock has the market context.
 
 The **Profil** tab works as soon as the prices arrive. Each other tab names
-the rows it still needs until they are filled. Every shared tab starts with a
-**Kode** column, so one tab holds all stocks:
+the rows it still needs, with two buttons:
 
-| Tab | One row per | Columns after Kode |
+- **✦ Isi dengan Claude**: Claude searches the web and proposes the missing
+  figures, each with its source. You untick what you don't trust and save.
+  Nothing is stored before you press **Simpan**.
+- **Edit tabel**: type the figures yourself.
+
+Every shared table starts with a **Kode** column, so one table holds all
+stocks:
+
+| Table | One row per | Columns after Kode |
 | --- | --- | --- |
 | Daftar | stock | Nama, Sektor (bank/umum), Pembanding, Catatan |
 | Fundamental | stock × key | Kunci, Keterangan, Nilai, Satuan, Catatan (period; source) |
@@ -303,8 +380,10 @@ the rows it still needs until they are filled. Every shared tab starts with a
 | Dividen | payment | Tanggal bayar, Tahun buku, interim/final, Per saham, Catatan |
 | Arus asing | flow figure or event | Mulai, Selesai, Jenis, Net (Rp miliar), Basis, Kualitas, Sumber, Catatan |
 
-**Let Claude fill it.** Ask Claude Code `isi data saham BBRI`. The project
-skill `.claude/skills/stock-data` works in three steps:
+**Let Claude fill it, from the page or from Claude Code.** The button runs
+`backend/ai.py` through the Claude API (see *Claude buttons* below). In
+Claude Code, ask `isi data saham BBRI`; the project skill
+`.claude/skills/stock-data` follows the same source rules in three steps:
 
 1. Run `python scripts/stock_rows.py todo BBRI` to see what is blank.
 2. Research the figures from the issuer's filings (IDX, investor relations),
@@ -312,10 +391,10 @@ skill `.claude/skills/stock-data` works in three steps:
    It never uses Wikipedia or aggregators.
 3. Write a draft to `data/stocks/BBRI.json`, check it with
    `python scripts/stock_rows.py write data/stocks/BBRI.json --dry-run`, and
-   write it to the Sheet. Every value carries its source in Catatan/Sumber.
+   save it to the store (and Drive). Every value carries its source in
+   Catatan/Sumber.
 
-A batch of rows costs one read, one write and one refresh per tab, which keeps
-it well under Google's request limit.
+A batch of rows is one save and one upload per table.
 
 **Hand-written commentary** is optional. A stock with its own
 `frontend/js/stock/<CODE>.js` (like BMRI) uses that file's names and
@@ -331,11 +410,34 @@ Notes on this port from the prototype:
   `Fundamental` tab), so its DDM value is higher than the prototype's.
 - A market event sourced only from Wikipedia was left out of the flow tab.
 
+## Claude buttons (insights and stock research)
+
+Two buttons call Claude directly from the app (`backend/ai.py`, through the
+Claude API):
+
+| Button | Where | What it does |
+|---|---|---|
+| **✦ Buat insight / Perbarui insight** | Insight dari Claude panel | Builds the fact sheet, has Claude write the insights as JSON, checks every number, publishes. If a number is not in the facts, Claude gets one chance to fix it; otherwise nothing is published |
+| **✦ Isi dengan Claude** | a stock's Valuasi or Dividen tab | Claude researches with web search (filings on idx.co.id and investor-relations sites, then OJK and BEI, then established press; never Wikipedia or aggregators), then turns its notes into rows. You review them before anything is saved |
+
+They need a Claude credential on the computer running the app. Do one of
+these, then restart the app:
+
+- run `ant auth login` (Anthropic's CLI), or
+- start the app with `ANTHROPIC_API_KEY=... ./start.sh`.
+
+Without one, the button says so instead of failing. Each run is billed to
+that account: an insight run reads the ~2k-token fact sheet; a stock
+research run does up to 15 web searches and 15 page fetches. If a safety
+check declines a request, the API retries it on a fallback model inside the
+same call (`fallbacks: "default"`).
+
 ## Insights written by Claude (project skill)
 
-`.claude/skills/economic-insights/` is a project-level Claude Code skill.
-In Claude Code, inside this folder, ask for example *"buat insight dari data
-dashboard"* ("write insights from the dashboard data"). The skill:
+The same insights can also come from Claude Code:
+`.claude/skills/economic-insights/` is a project-level skill. In Claude Code,
+inside this folder, ask for example *"buat insight dari data dashboard"*
+("write insights from the dashboard data"). The skill:
 
 1. runs `scripts/digest.py`, a ~60-line fact sheet (about 2k tokens) with
    every number precomputed: levels, changes, ranges, correlations, rankings,
@@ -353,14 +455,18 @@ Claude does the interpretation (what matters, what connects).
 
 ## Adding a new indicator
 
-1. **Sheet:** add a tab with a header row and one row per period
-   (`Periode | Nilai | Unit | Penerbit | URL sumber | Tingkat kepercayaan | Catatan`).
-2. **Source:** add an entry to `config/datasets.yaml`, e.g.
-   `range: "'Ekspor'!A2:G"` and `write: append`.
+1. **Source:** add an entry to `config/datasets.yaml` with its columns, e.g.
+   `columns: [Periode, Nilai, Unit, Penerbit, URL sumber, Tingkat kepercayaan, Catatan]`,
+   `write: append`, `frequency: monthly`, `lag_days: 30`.
+2. **Data:** on the Metadata page, **Edit tabel** → **+ Baris**, fill in the
+   rows, then **Simpan**. The first save creates `<id>.json` in the Drive folder.
 3. **Shape:** add a `dash.loader('ekspor', …)` in `js/data/loaders.js` that names the columns.
 4. **Drawing:** draw it in a section script, or reuse the helpers in `01-core.js`
    (`drawLine`, `drawBar`).
-5. Click **Tarik dari Sheet**.
+
+A price series instead? Put a `GOOGLEFINANCE` formula in a Sheet tab and
+declare it with `range:` and `source: sheet`; it is copied into the store on
+every **⟳ Tarik**.
 
 **Automatic updaters** live in `backend/updaters/`. Each one is a function
 that *proposes* rows. `fred.py` is the worked example (Fed Funds, US GDP).
@@ -395,9 +501,10 @@ Kepulauan Riau, and NTT.
 ```
 
 They cover the write path, the freshness rules, the retry/skip behaviour,
-the insights number check, and adding a stock (the Saham sheet, its tabs and
-GOOGLEFINANCE formulas, batched writes). They use a fake in-memory Sheet, so they never
-touch your real one.
+the insights number check, adding a stock (price-feed tabs, GOOGLEFINANCE
+formulas, store tables), the JSON store and its Drive sync (fake Drive), and
+the Claude buttons (fake client). They use fakes for Google and Claude, so they
+never touch your real Sheets, Drive or Claude account.
 
 ## Known limits, worth thinking about
 

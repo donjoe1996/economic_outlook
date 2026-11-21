@@ -1,8 +1,10 @@
 """The app's logic, independent of the web framework.
 
-    Sheet  --refresh-->  cache  --snapshot-->  page
-      ^                                          |
-      +---------- upsert (form / updater) <------+
+    Drive folder  <--sync-->  data/store/ (typed JSON)  --snapshot-->  page
+    feed Sheets   --pull-->        ^                                    |
+    (GOOGLEFINANCE)                +--- upsert / table edit / updater <-+
+
+Manual datasets live only in the store; Sheets are read-only price feeds.
 
 Keeping this separate from main.py means it can be tested with a fake Sheet
 (tests/test_service.py) and reused from scripts.
@@ -13,7 +15,9 @@ import json
 import re
 from datetime import date
 
-from .cache import Cache
+from .drive import DriveAPI, folder_url
+from .store import Store
+from . import sync as drive_sync
 from .freshness import Freshness, assess, parse_period
 from .config import AppConfig, Dataset
 from .jobs import NO_PROGRESS, Progress
@@ -77,10 +81,37 @@ class _StepsOnly(Progress):
 
 
 class Service:
-    def __init__(self, cfg: AppConfig, cache: Cache, sheets: SheetsAPI):
+    def __init__(self, cfg: AppConfig, store: Store, sheets: SheetsAPI, drive: DriveAPI | None = None):
         self.cfg = cfg
-        self.cache = cache
+        self.store = store
+        self.cache = store        # older name, same object
         self.sheets = sheets
+        self.drive = drive        # None: work locally, sync later
+
+    # ---------------------------------------------------------------- drive
+    @property
+    def folder_url(self) -> str:
+        return folder_url(self.cfg.drive_folder)
+
+    def sync_pull(self, progress: Progress = NO_PROGRESS) -> dict | None:
+        if not (self.drive and self.cfg.drive_folder):
+            return None
+        out = drive_sync.pull(self.store, self.drive, self.cfg.drive_folder, progress)
+        for name in out["conflicts"]:
+            progress.warn(f"{name} berubah di Drive dan di sini; versi Drive dipakai, versi lokal disimpan sebagai cadangan.")
+        return out
+
+    def sync_push(self, progress: Progress = NO_PROGRESS) -> dict | None:
+        if not (self.drive and self.cfg.drive_folder):
+            if self.store.dirty():
+                progress.step("Drive belum terhubung: perubahan tersimpan lokal dan diunggah saat sinkron berikutnya")
+            return None
+        return drive_sync.push(self.store, self.drive, self.cfg.drive_folder, progress=progress)
+
+    def store_status(self) -> dict:
+        st = self.store.sync_state()
+        return {"folder": self.cfg.drive_folder, "folder_url": self.folder_url, "drive": bool(self.drive),
+                "dirty": self.store.dirty(), "synced_at": st.get("synced_at"), "files": len(self.store.files())}
 
     def dataset(self, ds_id: str) -> Dataset:
         ds = self.cfg.datasets.get(ds_id)
@@ -101,25 +132,37 @@ class Service:
             if (group or ids) and not (ds.group == group or (ids and ds.id in ids)):
                 continue
             item = {"title": ds.title, "description": ds.description, "kind": ds.kind, "write": ds.write,
-                    "sheet_url": self.cfg.url_of(ds.spreadsheet) if ds.kind == "sheet" and ds.spreadsheet else None}
+                    "source": ds.source if ds.kind == "sheet" else "file",
+                    "sheet_url": (self.cfg.url_of(ds.spreadsheet) if ds.is_feed and ds.spreadsheet
+                                  else self.folder_url or None) if ds.kind == "sheet" else None}
             if ds.kind == "file":
                 try:
-                    item.update(status="ok", answer=json.loads(ds.file.read_text(encoding="utf-8")))
+                    if ds.file.stat().st_size > 50_000:
+                        # big static files (map shapes): own URL, so the browser caches them
+                        item.update(status="ok", answer_url=f"/api/files/{ds.id}?v={int(ds.file.stat().st_mtime)}")
+                    else:
+                        item.update(status="ok", answer=json.loads(ds.file.read_text(encoding="utf-8")))
                 except FileNotFoundError:
                     item.update(status="missing", message=f"File {ds.file.name} tidak ditemukan")
             else:
-                doc = self.cache.get(ds.id)
+                doc = self.store.typed(ds.id)
                 if doc is None:
-                    item.update(status="missing", message="Belum pernah ditarik dari Sheet" if (ds.spreadsheet or not ds.alias)
-                                else "Spreadsheet-nya belum dibuat (tambahkan saham pertama untuk membuatnya)")
+                    item.update(status="missing", message=(
+                        "Belum pernah ditarik dari Sheet" if ds.is_feed and (ds.spreadsheet or not ds.alias)
+                        else "Spreadsheet-nya belum dibuat (tambahkan saham pertama untuk membuatnya)" if ds.is_feed
+                        else "Belum ada di penyimpanan data"))
                 else:
+                    fields = doc.get("schema", {}).get("fields", [])
                     item.update(
                         status="ok",
-                        answer={"values": doc["values"]},
-                        header=doc.get("header", []),
-                        range=doc.get("range"),
-                        fetched_at=doc.get("fetched_at"),
-                        source=doc.get("source"),
+                        # typed values; blanks as "" because the page's loaders were written for Sheet text
+                        answer={"values": [["" if v is None else v for v in r] for r in doc.get("rows", [])]},
+                        header=[f["name"] for f in fields],
+                        types=[f["type"] for f in fields],
+                        range=doc.get("origin"),
+                        fetched_at=doc.get("updated_at"),
+                        changed_at=doc.get("changed_at"),
+                        stored_source=doc.get("source"),
                     )
             out[ds.id] = item
         return out
@@ -140,7 +183,7 @@ class Service:
         Returns {"rows": {id: n_rows}, "failed": {id: message}}.
         """
         targets = [self.dataset(i) for i in ids] if ids else [d for d in self.cfg.datasets.values() if d.kind == "sheet"]
-        targets = [d for d in targets if d.kind == "sheet"]
+        targets = [d for d in targets if d.is_feed]
         # A spreadsheet alias with no id yet (the Saham sheet before the first
         # stock is added) is not an error: there is simply nothing to pull.
         targets = [d for d in targets if d.spreadsheet or not d.alias]
@@ -171,7 +214,8 @@ class Service:
                     else:
                         values, header_rows = self._get_with_retry([d], progress)
                     header = _pad(header_rows[0], d.range.width) if (header_rows and d.range.header_a1()) else []
-                    self.cache.put(d.id, range_a1=d.range.a1(), header=header, values=values, source="sheet")
+                    self.store.put(d.id, range_a1=d.range.a1(), header=header, values=values, source="sheet",
+                                   title=d.title, key=d.key)
                     self.cache.record(d.id, "pull", True)
                     rows[d.id] = len(values)
                 except SheetsNotAuthorized:
@@ -224,24 +268,32 @@ class Service:
                 "kind": ds.kind,
                 "write": ds.write,
                 "has_updater": bool(ds.updater),
+                "source": ds.source if ds.kind == "sheet" else "file",
+                "editable": ds.writable,
+                "derived": [d["col"] for d in ds.derived],
             }
             if ds.kind == "sheet":
-                doc = self.cache.get(ds.id) or {"header": [], "values": []}
-                rows = [_pad(r, ds.range.width) for r in doc["values"]]
+                doc = self.store.get(ds.id) or {"header": list(ds.columns), "values": []}
+                width = self._width(ds, doc)
+                rows = [_pad(r, width) for r in doc["values"]]
                 header = doc.get("header") or []
+                types = [f["type"] for f in ((self.store.typed(ds.id) or {}).get("schema", {}).get("fields", []))]
                 cols = []
-                for c in range(ds.range.width):
+                for c in range(width):
                     seen = [r[c] for r in rows if r[c].strip()]
                     distinct = list(dict.fromkeys(seen))
                     cols.append({
                         "index": c,
                         "name": (header[c] if c < len(header) and header[c] else f"Kolom {c + 1}"),
-                        "numeric": len(seen) >= 2 and all(_is_number(v) for v in seen),
+                        "numeric": (types[c] == "number") if c < len(types) else (len(seen) >= 2 and all(_is_number(v) for v in seen)),
+                        "type": types[c] if c < len(types) else "string",
+                        "derived": any(d["col"] == c for d in ds.derived),
                         "key": c in ds.key,
                         # repeated text (units, publishers, confidence) is offered as suggestions
                         "suggestions": [v for v in distinct if seen.count(v) > 1][:12],
                     })
-                item.update(range=ds.range.a1(), columns=cols, last_rows=rows[-3:], fetched_at=doc.get("fetched_at"))
+                item.update(range=ds.range.a1(), columns=cols, last_rows=rows[-3:], fetched_at=doc.get("fetched_at"),
+                            row_count=len(rows))
             out.append(item)
         return out
 
@@ -273,14 +325,18 @@ class Service:
                 item.update(status=f.status, status_text=f.text)
                 items.append(item)
                 continue
-            sheet_tabs = tabs.get(ds.spreadsheet, {})
-            item["sheet_link"] = self.cfg.url_of(ds.spreadsheet) + (f"#gid={sheet_tabs[ds.range.tab]}" if ds.range.tab in sheet_tabs else "")
-            doc = self.cache.get(ds.id)
+            item.update(source=ds.source, editable=ds.writable)
+            if ds.is_feed and ds.spreadsheet:
+                sheet_tabs = tabs.get(ds.spreadsheet, {})
+                item["sheet_link"] = self.cfg.url_of(ds.spreadsheet) + (f"#gid={sheet_tabs[ds.range.tab]}" if ds.range.tab in sheet_tabs else "")
+            else:
+                item["sheet_link"] = self.folder_url or None
+            doc = self.store.get(ds.id)
             if doc is None:
-                item.update(status="error", status_text="Belum pernah ditarik dari Sheet.")
+                item.update(status="error", status_text="Belum pernah ditarik dari Sheet." if ds.is_feed else "Belum ada di penyimpanan data.")
                 items.append(item)
                 continue
-            rows = [_pad(r, ds.range.width) for r in doc["values"]]
+            rows = [_pad(r, self._width(ds, doc)) for r in doc["values"]]
             pcol = ds.period_col if ds.period_col is not None else ds.key[0]
             vcol = ds.value_col
             ends, gaps = [], []
@@ -314,7 +370,8 @@ class Service:
         counts: dict[str, int] = {}
         for it in items:
             counts[it["status"]] = counts.get(it["status"], 0) + 1
-        return {"today": today.isoformat(), "sheet_url": self.cfg.sheet_url, "counts": counts, "datasets": items}
+        return {"today": today.isoformat(), "sheet_url": self.cfg.sheet_url, "counts": counts, "datasets": items,
+                "store": self.store_status()}
 
     # --------------------------------------------------------------- write
     def upsert(self, ds_id: str, new_row: list[str], progress: Progress = NO_PROGRESS) -> dict:
@@ -327,68 +384,168 @@ class Service:
         r = out["results"][0]
         return {"action": r["action"], "sheet_row": r["sheet_row"], "cells_written": out["cells_written"]}
 
-    def upsert_many(self, ds_id: str, new_rows: list[list[str]], progress: Progress = NO_PROGRESS) -> dict:
-        """upsert for many rows at once: one read, one write, one refresh.
+    @staticmethod
+    def _width(ds: Dataset, doc: dict | None) -> int:
+        w = ds.range.width if ds.range else 0
+        if doc:
+            w = max([w, len(doc.get("header") or [])] + [len(r) for r in doc.get("values", [])])
+        return w
 
-        Used when a whole block arrives together (e.g. a stock's fundamentals),
-        so 30 rows cost 3 Google requests instead of 90.
+    def _writable(self, ds: Dataset) -> None:
+        if ds.is_feed:
+            raise UserError(f"'{ds.title}' diisi rumus GOOGLEFINANCE di Google Sheet (feed), jadi hanya-baca di aplikasi.")
+        if not ds.writable:
+            raise UserError(f"'{ds.title}' hanya-baca (write: {ds.write}).")
+
+    def _check_types(self, ds: Dataset, row: list[str], types: list[str]) -> None:
+        derived = {d["col"] for d in ds.derived}
+        for c, v in enumerate(row):
+            if not v or c in derived or c >= len(types):
+                continue
+            if types[c] == "number" and parse_number(v) is None:
+                raise UserError(f"Kolom {c + 1} berisi angka, tetapi '{v}' bukan angka.")
+
+    def _types(self, ds: Dataset, rows: list[list[str]], width: int) -> list[str]:
+        """Column types: the stored schema, else what the rows hold today."""
+        stored = self.store.typed(ds.id) or {}
+        fields = stored.get("schema", {}).get("fields", []) if stored.get("rows") else []
+        out = []
+        for c in range(width):
+            if c < len(fields):
+                out.append(fields[c]["type"])
+            else:
+                seen = [r[c] for r in rows if c < len(r) and r[c].strip()]
+                out.append("number" if len(seen) >= 2 and all(_is_number(v) for v in seen) else "string")
+        return out
+
+    def derive(self, ds: Dataset, rows: list[list[str]]) -> list[list[str]]:
+        """Recompute the dataset's derived columns (what Sheet formulas used to do)."""
+        if not ds.derived:
+            return rows
+        lookups = {}
+        for d in ds.derived:
+            if d["op"] == "lookup" and d["dataset"] not in lookups:
+                src = (self.store.get(d["dataset"]) or {}).get("values", [])
+                lookups[d["dataset"]] = {_norm_key(r[d["key"]]): (r[d["value"]] if d["value"] < len(r) else "")
+                                         for r in src if d["key"] < len(r)}
+        out = []
+        for r in rows:
+            r = list(r)
+            for d in ds.derived:
+                while len(r) <= d["col"]:
+                    r.append("")
+                args = [r[a] if a < len(r) else "" for a in d["args"]]
+                nums = [parse_number(a) if _is_number(a) else None for a in args]
+                val = ""
+                if d["op"] == "diff" and None not in nums and len(nums) == 2:
+                    val = nums[0] - nums[1]
+                elif d["op"] == "pct_change" and None not in nums and len(nums) == 2 and nums[0]:
+                    val = (nums[1] / nums[0] - 1) * 100
+                elif d["op"] == "iso_date":
+                    p = parse_period(args[0]) if args else None
+                    val = p.isoformat() if p else ""
+                elif d["op"] == "lookup":
+                    val = lookups.get(d["dataset"], {}).get(_norm_key(args[0]) if args else "", "")
+                if isinstance(val, float):
+                    val = round(val, d["round"]) if d.get("round") is not None else val
+                    val = repr(float(val)).rstrip("0").rstrip(".") if not float(val).is_integer() else str(int(val))
+                r[d["col"]] = str(val)
+            out.append(r)
+        return out
+
+    def _save(self, ds: Dataset, header: list[str], rows: list[list[str]], source: str) -> dict:
+        rows = self.derive(ds, rows)
+        # types are inferred from the full table on every save (lossless: one
+        # text cell keeps a column as text; the form check stops that for number columns)
+        doc = self.store.put(ds.id, header=header, values=rows, source=source, title=ds.title, key=ds.key,
+                             range_a1=ds.range.a1() if ds.range else None)
+        # datasets that look values up in this one (rotation <- flow)
+        for other in self.cfg.datasets.values():
+            if other.id != ds.id and any(d["op"] == "lookup" and d["dataset"] == ds.id for d in other.derived):
+                cur = self.store.get(other.id)
+                if cur:
+                    self.store.put(other.id, header=cur["header"], values=self.derive(other, cur["values"]),
+                                   source=source, title=other.title, key=other.key)
+        return doc
+
+    def upsert_many(self, ds_id: str, new_rows: list[list[str]], progress: Progress = NO_PROGRESS,
+                    source: str = "app", push: bool = True) -> dict:
+        """Add or update rows, matched by the dataset's key columns.
+
+        Only cells you filled in change; blanks in new_rows leave the stored
+        value alone. One save to the store, then one upload to Drive.
         """
         ds = self.dataset(ds_id)
-        if ds.kind == "sheet" and ds.alias and not ds.spreadsheet:
-            raise UserError(f"'{ds.title}': spreadsheet '{ds.alias}' belum dibuat. Tambahkan saham pertama dulu.")
-        if not ds.writable:
-            raise UserError(f"'{ds.title}' hanya-baca (write: {ds.write}). Ubah langsung di Google Sheet.")
-        rng = ds.range
-        progress.step(f"Membaca tabel '{ds.title}' terbaru dari Sheet")
-        live = [_pad(r, rng.width) for r in self.sheets.batch_get(ds.spreadsheet, [rng.a1()])[0]]
-        progress.step("Memeriksa isian")
-        # which columns hold only numbers today (checked before any new row is added)
-        numeric = []
-        for c in range(rng.width):
-            seen = [r[c] for r in live if r[c].strip()]
-            numeric.append(len(seen) >= 2 and all(_is_number(v) for v in seen))
-        cells: dict[str, str] = {}
+        self._writable(ds)
+        doc = self.store.get(ds.id) or {"header": list(ds.columns), "values": []}
+        width = self._width(ds, doc)
+        live = [_pad(r, width) for r in doc["values"]]
+        header = _pad(doc.get("header") or list(ds.columns), width)
+        types = self._types(ds, live, width)
+        progress.step(f"Memeriksa isian untuk '{ds.title}'")
+        derived = {d["col"] for d in ds.derived}
+        cells = 0
         results = []
         for new_row in new_rows:
-            new = [v.strip() for v in _pad(new_row, rng.width)]
+            new = [v.strip() for v in _pad(new_row, width)]
             if any(not new[k] for k in ds.key):
                 names = ", ".join(str(k + 1) for k in ds.key)
                 raise UserError(f"Kolom kunci (kolom {names}) wajib diisi, misalnya periode.")
-            for c in range(rng.width):
-                if new[c] and numeric[c] and parse_number(new[c]) is None:
-                    raise UserError(f"Kolom {c + 1} berisi angka, tetapi '{new[c]}' bukan angka.")
+            self._check_types(ds, new, types)
             key = tuple(_norm_key(new[k]) for k in ds.key)
             match = next((i for i, r in enumerate(live) if tuple(_norm_key(r[k]) for k in ds.key) == key), None)
             if match is not None:
-                sheet_row = rng.first_row + match
-                row_cells = {
-                    rng.cell_a1(sheet_row, c): new[c]
-                    for c in range(rng.width)
-                    if c not in ds.key and new[c] and not _same(new[c], live[match][c])
-                }
-                for c in range(rng.width):   # later rows in this batch see the change
-                    if c not in ds.key and new[c]:
-                        live[match][c] = new[c]
-                action = "update" if row_cells else "unchanged"
+                changed = [c for c in range(width)
+                           if c not in ds.key and c not in derived and new[c] and not _same(new[c], live[match][c])]
+                for c in changed:
+                    live[match][c] = new[c]
+                action, row_no = ("update" if changed else "unchanged"), match + 1
             elif ds.write == "append":
-                sheet_row = rng.first_row + len(live)
-                row_cells = {rng.cell_a1(sheet_row, c): new[c] for c in range(rng.width) if new[c]}
-                live.append(new)
-                action = "append"
+                changed = [c for c in range(width) if new[c] and c not in derived]
+                live.append([new[c] if c not in derived else "" for c in range(width)])
+                action, row_no = "append", len(live)
             else:
-                keys = ", ".join(live[i][ds.key[0]] for i in range(len(live)) if live[i][ds.key[0]]) or "-"
+                keys = ", ".join(r[ds.key[0]] for r in live if r[ds.key[0]]) or "-"
                 raise UserError(
                     f"'{new[ds.key[0]]}' belum ada di tabel ini. Mode 'fill' hanya mengisi baris yang sudah ada ({keys}). "
-                    "Tambahkan barisnya di Sheet lalu perlebar range di config/datasets.yaml."
-                )
-            cells.update(row_cells)
-            results.append({"key": [new[k] for k in ds.key], "action": action, "sheet_row": sheet_row, "cells": len(row_cells)})
-
+                    "Tambahkan barisnya lewat editor tabel di halaman Metadata.")
+            cells += len(changed)
+            results.append({"key": [new[k] for k in ds.key], "action": action, "sheet_row": row_no, "cells": len(changed)})
         if cells:
-            rows_txt = ", ".join(str(r["key"][0]) for r in results if r["cells"])[:120]
-            progress.step(f"Menulis {len(cells)} sel ({rows_txt})")
-            self.sheets.write_cells(ds.spreadsheet, cells)
-            pulled = self.refresh([ds.id], progress=_StepsOnly(progress))
-            if pulled["failed"]:
-                progress.warn("Tersimpan di Sheet, tetapi salinan lokal belum diperbarui. Klik 'Tarik dari Sheet' nanti.")
-        return {"results": results, "cells_written": len(cells)}
+            progress.step(f"Menyimpan {cells} sel ke {ds.id}.json")
+            self._save(ds, header, live, source)
+            if push:
+                self.sync_push(progress)
+        return {"results": results, "cells_written": cells}
+
+    def save_table(self, ds_id: str, rows: list[list[str]], progress: Progress = NO_PROGRESS) -> dict:
+        """Replace a dataset's rows with an edited table (the in-app editor).
+
+        Checks every row like upsert does, plus unique keys; derived columns
+        are recomputed, so whatever the editor sent for them is ignored.
+        """
+        ds = self.dataset(ds_id)
+        self._writable(ds)
+        doc = self.store.get(ds.id) or {"header": list(ds.columns), "values": []}
+        width = max([self._width(ds, doc)] + [len(r) for r in rows])
+        header = _pad(doc.get("header") or list(ds.columns), width)
+        clean = [[("" if v is None else str(v)).strip() for v in _pad(r, width)] for r in rows]
+        clean = [r for r in clean if any(r)]                      # drop fully blank rows
+        types = self._types(ds, [_pad(r, width) for r in doc["values"]], width)
+        seen = set()
+        for i, r in enumerate(clean, 1):
+            if any(not r[k] for k in ds.key):
+                raise UserError(f"Baris {i}: kolom kunci ({', '.join(header[k] or str(k + 1) for k in ds.key)}) wajib diisi.")
+            try:
+                self._check_types(ds, r, types)
+            except UserError as exc:
+                raise UserError(f"Baris {i}: {exc}") from None
+            key = tuple(_norm_key(r[k]) for k in ds.key)
+            if key in seen:
+                raise UserError(f"Baris {i}: kunci '{' / '.join(r[k] for k in ds.key)}' muncul dua kali.")
+            seen.add(key)
+        before = len(doc["values"])
+        progress.step(f"Menyimpan {len(clean)} baris ke {ds.id}.json")
+        self._save(ds, header, clean, "app")
+        self.sync_push(progress)
+        return {"rows": len(clean), "before": before}

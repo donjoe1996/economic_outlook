@@ -16,7 +16,10 @@ from typing import Protocol
 
 from .config import CREDENTIALS_PATH, TOKEN_PATH
 
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets"
+# Drive: the data store is a folder of JSON files (backend/store.py, drive.py).
+DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
+SCOPES = [SHEETS_SCOPE, DRIVE_SCOPE]
 
 
 class SheetsNotAuthorized(RuntimeError):
@@ -51,7 +54,9 @@ class GoogleSheets:
 
         if not self.token_path.exists():
             return None
-        creds = Credentials.from_authorized_user_file(str(self.token_path), SCOPES)
+        # Load with the scopes the token was granted (a token from before the
+        # Drive store only has Sheets; asking for more on refresh would fail).
+        creds = Credentials.from_authorized_user_file(str(self.token_path), self._granted() or SCOPES)
         if creds.valid:
             return creds
         if creds.expired and creds.refresh_token:
@@ -62,6 +67,31 @@ class GoogleSheets:
             self.token_path.write_text(creds.to_json(), encoding="utf-8")
             return creds
         return None
+
+    def _granted(self) -> list[str]:
+        try:
+            doc = json.loads(self.token_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return []
+        sc = doc.get("scopes") or doc.get("scope") or []
+        return sc.split() if isinstance(sc, str) else list(sc)
+
+    def has_drive(self) -> bool:
+        return DRIVE_SCOPE in self._granted()
+
+    def credentials(self):
+        """For other Google APIs (Drive) on the same sign-in."""
+        creds = self._load_creds()
+        if creds is None:
+            raise SheetsNotAuthorized("Belum masuk ke Google. Klik 'Hubungkan Google' di toolbar (lihat README).")
+        return creds
+
+    def ensure_drive(self, progress=None) -> None:
+        self.ensure_signed_in(progress)
+        if not self.has_drive():
+            raise SheetsNotAuthorized(
+                "Izin Google Drive belum diberikan (penyimpanan data kini di Drive). "
+                "Klik 'Hubungkan Google' sekali lagi dan setujui akses Drive.")
 
     def status(self) -> dict:
         """Cheap check, no network: is there a saved sign-in we can renew?
@@ -75,7 +105,8 @@ class GoogleSheets:
                 signed_in = bool(json.loads(self.token_path.read_text(encoding="utf-8")).get("refresh_token"))
             except (OSError, ValueError):
                 signed_in = False
-        return {"has_credentials_file": self.credentials_path.exists(), "signed_in": signed_in}
+        return {"has_credentials_file": self.credentials_path.exists(), "signed_in": signed_in,
+                "drive": signed_in and self.has_drive()}
 
     def ensure_signed_in(self, progress=None) -> None:
         """Renew the sign-in if needed (network). Raises if there is none."""
