@@ -1,0 +1,631 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Indonesia Economic Outlook</title>
+<link rel="stylesheet" href="css/theme.css">
+<link rel="stylesheet" href="css/dashboard.css">
+<link rel="stylesheet" href="css/admin.css">
+</head>
+<body>
+
+<!-- ======================= Toolbar (js/admin.js) ======================= -->
+<div class="adm-bar" role="toolbar" aria-label="Data">
+  <span class="adm-pill warn" id="adm-google">Google: …</span>
+  <span class="adm-grow" id="adm-status">Memuat data…</span>
+  <button class="adm-btn primary" id="adm-login" hidden>Hubungkan Google</button>
+  <button class="adm-btn" id="adm-refresh" title="Baca ulang semua dataset dari Google Sheet ke salinan lokal">Tarik dari Sheet</button>
+  <button class="adm-btn" id="adm-add" title="Tambah periode baru atau isi sel kosong, langsung ke Google Sheet">Tambah / perbarui data</button>
+  <button class="adm-btn" id="adm-auto" title="Cek sumber resmi (FRED) untuk periode baru">Cek data baru otomatis</button>
+  <button class="adm-btn" id="adm-sources">Sumber data</button>
+  <a class="adm-btn" id="adm-sheet" href="#" target="_blank" rel="noopener">Buka Sheet ↗</a>
+</div>
+
+<dialog class="adm-dlg" id="adm-form-dlg">
+  <form id="adm-form">
+    <h2>Tambah / perbarui data di Google Sheet</h2>
+    <label class="adm-field"><span>Dataset</span><select id="adm-ds"></select></label>
+    <p class="adm-help" id="adm-ds-help"></p>
+    <div class="adm-fields" id="adm-fields"></div>
+    <div class="adm-actions">
+      <button type="button" class="adm-btn" data-close>Batal</button>
+      <button type="submit" class="adm-btn primary" id="adm-submit">Simpan ke Sheet</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="adm-dlg" id="adm-upd-dlg">
+  <form id="adm-upd-form">
+    <h2>Periode baru dari sumber resmi</h2>
+    <p class="adm-help">Centang baris yang mau ditulis ke Sheet. Tidak ada yang ditulis sebelum Anda menekan tombol.</p>
+    <div id="adm-upd"></div>
+    <div class="adm-actions">
+      <button type="button" class="adm-btn" data-close>Tutup</button>
+      <button type="submit" class="adm-btn primary" id="adm-upd-apply">Tulis yang dicentang</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="adm-dlg" id="adm-src-dlg">
+  <h2>Sumber data</h2>
+  <p class="adm-help">Diatur di <code>config/datasets.yaml</code>. Setiap angka di halaman berasal dari salah satu dataset ini.</p>
+  <div class="adm-scroll" id="adm-src"></div>
+  <div class="adm-actions"><button type="button" class="adm-btn" data-close>Tutup</button></div>
+</dialog>
+
+<div class="adm-toast" id="adm-toast" role="status" aria-live="polite"></div>
+
+<!-- ======================= Dashboard (from the prototype) ======================= -->
+<div id="dash-root">
+<div class="eo">
+<header class="eo-head">
+<h1 class="eo-title">Indonesia Economic Outlook</h1>
+<p class="eo-sub">Dibaca dari luar ke dalam: peta koneksi, lalu kondisi dunia, AS, dan Indonesia, lalu grafik detail. Konteks untuk keputusan investasi saham, khususnya perbankan.</p>
+<div class="eo-read"><b>Ringkasan narasi</b> → <b>Peta</b> → <b>1 · Dunia</b> → <b>2 · AS</b> → <b>3 · Indonesia</b> → <b>4 · BI</b> → <b>5 · Indikator</b> → <b>6 · Grafik</b> → <b>7 · Turunan</b> → <b>8 · Kredit</b> → <b>9 · Pasar saham</b> → <b>10 · Komposisi IHSG</b> → <b>11 · Saham tambang</b> → <b>12 · Uang & valuasi</b> → <b>13 · Pertanyaan</b></div>
+</header>
+<section class="eo-note" id="eo-narasi">
+<div class="eo-nar-block">
+<h2 class="eo-nar-title">Keadaan ekonomi sekarang</h2>
+<p>Ekonomi masih tumbuh, tapi melambat dan di bawah tekanan harga serta kurs. PDB riil (nilai barang dan jasa yang dihasilkan, sudah dikurangi inflasi) melambat dari 5,61% di Q1 ke 5,29% di Q2 2026; angka Q3 baru rilis awal November. Inflasi (kenaikan harga setahun terakhir) 3,28% di September, masih di dalam target BI 1,5–3,5% tapi dekat batas atas. Rupiah melemah sekitar 7% sejak Oktober 2025 (rata-rata 17.716 per USD di September, terlemah 18.004 di Juli), sehingga BI menaikkan suku bunga acuan ke 5,75%. Dana asing di saham berbalik dari beli bersih sekitar Rp12 triliun per bulan di akhir 2025 menjadi jual bersih hampir sepanjang 2026 (Rp23,3 triliun di Maret, Rp10,2 triliun di September). Bukan krisis, tapi ruang gerak kebijakan sempit.</p>
+</div>
+<div class="eo-nar-block">
+<h2 class="eo-nar-title">Dari luar: dunia, AS, dan jalur uang</h2>
+<p>Permintaan barang dunia kuat: PMI global (survei pabrik; di atas 50 berarti ekspansi) di atas 50 selama 12 bulan dan kini 53,0. AS lebih panas dari dunia (ISM 54,5), dan The Fed menaikkan bunga ke 3,75–4,00% di September. Akibatnya selisih bunga BI dengan AS menyempit dari 2,0 poin di Juni ke 1,75 poin, padahal selisih itu yang membuat Rupiah menarik bagi investor asing. Yield obligasi pemerintah 10 tahun (SBN) naik ke 7,64% pada 30 Oktober dari sekitar 6,1% setahun lalu, sementara yield obligasi AS 4,93%; selisihnya 2,71 poin, lebih lebar dari 2,03 poin setahun lalu (angka awal diturunkan, kepercayaan rendah). Pembeli terbesar Indonesia, China, lemah: PMI China di bawah 50 pada 6 dari 12 bulan.</p>
+</div>
+<div class="eo-nar-block">
+<h2 class="eo-nar-title">Pasar saham: lebih banyak masalah Indonesia daripada Asia</h2>
+<p>IHSG turun 38,1% sejak Oktober 2025 dan 41,5% dari puncak penutupan bulanan Desember, termasuk 16,7% hanya di Oktober 2026. Dari 15 pasar pembanding, tidak ada yang turun sedalam itu: Taiwan +60%, Korea +40% dan Jepang +21% (didorong teknologi), India dan Hong Kong sekitar −10%, Shenzhen −19%, ETF Asia Tenggara berkisar −9% sampai +13%. Jual bersih asing sekitar Rp 92 triliun (s.d. 21 Okt) hanya sekitar 1% dari kapitalisasi pasar Rp 9.379 triliun, jadi bukan penyebab utama; susutnya nilai kepemilikan asing terutama karena harga turun. Berita menunjuk ke tata kelola pasar: peringatan MSCI soal free float (28 Jan, IHSG −8% dalam sehari) dan sanksi OJK Rp 2,1 triliun atas DSSA, BREN, CUAN (16 Okt). Empat sektor terbesar (Keuangan, Energi, Bahan Baku, Infrastruktur) memegang sekitar 69% IHSG (data Maret). Saham batu bara justru positif, sejalan dengan harga batu bara dunia yang naik sekitar 37%, bukan dengan arus asing (dugaan, sampel 12 bulan). Valuasi jauh di bawah rata-ratanya: PER sekitar 10–12x pada Oktober dibanding rata-rata 10 tahun 16,7–21,7x (IPOT dan Stockbit, dikutip blog), jadi murah secara historis, tetapi belum tentu dasar. Ini bacaan data, bukan bukti sebab-akibat.</p>
+</div>
+<div class="eo-nar-block">
+<h2 class="eo-nar-title">Apa artinya untuk saham perbankan</h2>
+<p>Suku bunga tinggi punya dua sisi bagi bank: margin bunga bersih (NIM) bisa lebih tinggi, tapi biaya dana naik, kredit baru melambat, dan kredit macet (NPL) berisiko naik. Tahun ini bank turun lebih kecil dari IHSG (BBCA −38%, BMRI −27%, BBRI dan BBNI −24%). Katalis terbesar adalah sinyal penurunan suku bunga, yang butuh inflasi mereda, Rupiah stabil, dan jual bersih asing berhenti. Dari enam syarat yang kita pantau, per 2 November tiga terpenuhi: USD/IDR berhenti naik, selisih bunga menyempit, dan imbal laba IHSG (1 ÷ PER) di atas yield SBN. Tiga belum: asing beli bersih dua bulan berturut-turut, PMI di atas 50 selama tiga bulan, dan yield SBN yang berhenti naik. Data yang belum ada dan menentukan untuk memilih bank: PBV, ROE, NPL, dan dividen. Ini kerangka memahami, bukan rekomendasi beli atau jual.</p>
+</div>
+<p class="eo-nar-foot">Ringkasan manual per 2 November 2026: harga saham sampai Oktober, indikator makro sampai September. Yang segera keluar: PMI Oktober dan PDB Q3 pada 5 November. Perhatikan label "Kepercayaan data" di tiap card: yield SBN, valuasi, dan bobot sektor hanya berupa titik tanggal dari artikel. Angka di card dan grafik selalu yang terbaru, narasi ini tidak diperbarui otomatis.</p>
+</section>
+<section class="eo-panel eo-map" id="eo-map">
+<h2 class="eo-panel-title"><span class="eo-layer">Peta</span> Bagaimana dunia, AS, dan Indonesia terhubung <span class="eo-chart-hint">pilih jalur: barang (perdagangan, China, komoditas) atau uang (bunga, kurs, arus asing) · tebal garis = besarnya nilai</span></h2>
+<div class="eo-map-top">
+<div class="eo-map-left">
+<div class="eo-map-chips" id="eo-map-chips" role="group" aria-label="Pilih jalur"></div>
+<div class="eo-map-box" id="eo-map-box"><svg id="eo-map-svg" class="eo-svg" role="img" aria-label="Peta dunia dengan garis koneksi antara Dunia, Amerika Serikat, dan Indonesia"></svg><div class="eo-tooltip" id="eo-map-tip"></div></div>
+<div class="eo-map-note">Simpul "Dunia" dan titik ASEAN/Uni Eropa bersifat simbolis. Arus asing adalah agregat semua negara. Data perdagangan per mitra kumulatif Jan–Agu 2026. Garis bergerak menunjukkan arah pengaruh; garis arus asing berbalik arah bila dana keluar.</div>
+</div>
+<div class="eo-map-detail eo-map-right" id="eo-map-detail" aria-live="polite"></div>
+</div>
+<div class="eo-map-ins eo-map-ins-wide"><h3 class="eo-nar-title">Insight koneksi dari data 12 bulan</h3><ol id="eo-map-insights"></ol></div>
+<div class="eo-map-note">Koordinat mitra dagang dibaca dari tab "Perdagangan per Mitra" (kolom bujur/lintang); salinan GeoJSON di Google Drive: <a href="https://drive.google.com/file/d/1Dr9rA_1eWCjUcQmV9bXGxNbUxGUX2DH3/view" target="_blank" rel="noopener">koneksi-global-as-indonesia-v3.geojson</a>. Semua angka pada peta dibaca langsung dari spreadsheet.</div>
+</section>
+<section class="eo-panel" id="eo-global">
+<h2 class="eo-panel-title"><span class="eo-layer">1 · Dunia</span> Status ekonomi global <span class="eo-chart-hint">dinilai dari J.P. Morgan Global Manufacturing PMI, satu angka yang merangkum pabrik di seluruh dunia</span></h2>
+<div class="eo-verdict">
+<span class="eo-verdict-label eo-st" data-source="global" data-where="id=gl_verdict" data-field="statusText">—</span>
+<span class="eo-verdict-detail" data-source="global" data-where="id=gl_verdict" data-field="detail">—</span>
+</div>
+<div class="eo-rg-line" style="margin-bottom:10px"><span data-source="global" data-where="id=gl_verdict" data-field="delta">—</span></div>
+<div class="eo-rg">
+<div class="eo-rg-row">
+<div class="eo-rg-top"><span class="eo-rg-label">PMI manufaktur global, bulan terakhir</span><span class="eo-st" data-source="global" data-where="id=gl_level" data-field="statusText">—</span></div>
+<div class="eo-rg-val" data-source="global" data-where="id=gl_level" data-field="value">—</div>
+<div class="eo-rg-line"><span data-source="global" data-where="id=gl_level" data-field="delta">—</span></div>
+<div class="eo-rg-rule" data-source="global" data-where="id=gl_level" data-field="rule">—</div>
+</div>
+<div class="eo-rg-row">
+<div class="eo-rg-top"><span class="eo-rg-label">Tren · rata-rata 3 bulan vs 3 bulan sebelumnya</span><span class="eo-st" data-source="global" data-where="id=gl_trend" data-field="statusText">—</span></div>
+<div class="eo-rg-val" data-source="global" data-where="id=gl_trend" data-field="value">—</div>
+<div class="eo-rg-line"><span data-source="global" data-where="id=gl_trend" data-field="delta">—</span></div>
+<div class="eo-rg-rule" data-source="global" data-where="id=gl_trend" data-field="rule">—</div>
+</div>
+<div class="eo-rg-row">
+<div class="eo-rg-top"><span class="eo-rg-label">Perubahan sejak awal jendela 12 bulan</span><span class="eo-st" data-source="global" data-where="id=gl_window" data-field="statusText">—</span></div>
+<div class="eo-rg-val" data-source="global" data-where="id=gl_window" data-field="value">—</div>
+<div class="eo-rg-line"><span data-source="global" data-where="id=gl_window" data-field="delta">—</span></div>
+<div class="eo-rg-rule" data-source="global" data-where="id=gl_window" data-field="rule">—</div>
+</div>
+<div class="eo-rg-row">
+<div class="eo-rg-top"><span class="eo-rg-label">Bulan berturut-turut di atas 50</span><span class="eo-st" data-source="global" data-where="id=gl_streak" data-field="statusText">—</span></div>
+<div class="eo-rg-val" data-source="global" data-where="id=gl_streak" data-field="value">—</div>
+<div class="eo-rg-line"><span data-source="global" data-where="id=gl_streak" data-field="delta">—</span></div>
+<div class="eo-rg-rule" data-source="global" data-where="id=gl_streak" data-field="rule">—</div>
+</div>
+</div>
+<div class="eo-rg-rule" data-source="global" data-where="id=gl_verdict" data-field="rule">—</div>
+<h3 class="eo-chart-title" style="margin-top:12px">PMI Manufaktur Global <span class="eo-chart-hint">&gt;50 ekspansi · &lt;50 kontraksi</span></h3>
+<div class="eo-chart-wrap" data-source="gpmi">
+<svg id="chart-gpmi" class="eo-svg"></svg>
+</div>
+<div class="eo-conf">Kepercayaan data (PMI Global): <b class="eo-conf-badge" data-source="confidence" data-where="id=gpmi" data-field="label">—</b> <span class="eo-conf-detail" data-source="confidence" data-where="id=gpmi" data-field="detail">—</span></div>
+<div class="eo-rg-rule">Ini baru satu indikator global (sektor manufaktur). Belum termasuk jasa, inflasi, atau ekonomi China secara terpisah.</div>
+</section>
+<section class="eo-panel" id="eo-us">
+<h2 class="eo-panel-title"><span class="eo-layer">2 · AS</span> Status ekonomi AS <span class="eo-chart-hint">dinilai dari kebijakan suku bunga The Fed, ditambah pertumbuhan (ISM dan PDB)</span></h2>
+<div class="eo-verdict">
+<span class="eo-verdict-label eo-st" data-source="us" data-where="id=us_verdict" data-field="statusText">—</span>
+<span class="eo-verdict-detail" data-source="us" data-where="id=us_verdict" data-field="detail">—</span>
+</div>
+<div class="eo-rg-line" style="margin-bottom:10px"><span data-source="us" data-where="id=us_verdict" data-field="delta">—</span></div>
+<div class="eo-rg">
+<div class="eo-rg-row">
+<div class="eo-rg-top"><span class="eo-rg-label">Target Fed Funds (bawah–atas)</span><span class="eo-st" data-source="us" data-where="id=us_rate" data-field="statusText">—</span></div>
+<div class="eo-rg-val" data-source="us" data-where="id=us_rate" data-field="value">—</div>
+<div class="eo-rg-line"><span data-source="us" data-where="id=us_rate" data-field="delta">—</span></div>
+<div class="eo-rg-rule" data-source="us" data-where="id=us_rate" data-field="rule">—</div>
+</div>
+<div class="eo-rg-row">
+<div class="eo-rg-top"><span class="eo-rg-label">Perubahan bersih 12 bulan</span><span class="eo-st" data-source="us" data-where="id=us_net" data-field="statusText">—</span></div>
+<div class="eo-rg-val" data-source="us" data-where="id=us_net" data-field="value">—</div>
+<div class="eo-rg-line"><span data-source="us" data-where="id=us_net" data-field="delta">—</span></div>
+<div class="eo-rg-rule" data-source="us" data-where="id=us_net" data-field="rule">—</div>
+</div>
+<div class="eo-rg-row">
+<div class="eo-rg-top"><span class="eo-rg-label">Perubahan terakhir</span><span class="eo-st" data-source="us" data-where="id=us_last" data-field="statusText">—</span></div>
+<div class="eo-rg-val" data-source="us" data-where="id=us_last" data-field="value">—</div>
+<div class="eo-rg-line"><span data-source="us" data-where="id=us_last" data-field="delta">—</span></div>
+<div class="eo-rg-rule" data-source="us" data-where="id=us_last" data-field="rule">—</div>
+</div>
+<div class="eo-rg-row">
+<div class="eo-rg-top"><span class="eo-rg-label">Selisih bunga BI – AS</span><span class="eo-st" data-source="us" data-where="id=us_spread" data-field="statusText">—</span></div>
+<div class="eo-rg-val" data-source="us" data-where="id=us_spread" data-field="value">—</div>
+<div class="eo-rg-line"><span data-source="us" data-where="id=us_spread" data-field="delta">—</span></div>
+<div class="eo-rg-rule" data-source="us" data-where="id=us_spread" data-field="rule">—</div>
+</div>
+<div class="eo-rg-row">
+<div class="eo-rg-top"><span class="eo-rg-label">Pertumbuhan · leading · ISM manufaktur AS</span><span class="eo-st" data-source="us" data-where="id=us_ism" data-field="statusText">—</span></div>
+<div class="eo-rg-val" data-source="us" data-where="id=us_ism" data-field="value">—</div>
+<div class="eo-rg-line"><span data-source="us" data-where="id=us_ism" data-field="delta">—</span></div>
+<div class="eo-rg-rule" data-source="us" data-where="id=us_ism" data-field="rule">—</div>
+</div>
+<div class="eo-rg-row">
+<div class="eo-rg-top"><span class="eo-rg-label">Pertumbuhan · PDB riil AS (kuartal terakhir)</span><span class="eo-st" data-source="us" data-where="id=us_gdp" data-field="statusText">—</span></div>
+<div class="eo-rg-val" data-source="us" data-where="id=us_gdp" data-field="value">—</div>
+<div class="eo-rg-line"><span data-source="us" data-where="id=us_gdp" data-field="delta">—</span></div>
+<div class="eo-rg-rule" data-source="us" data-where="id=us_gdp" data-field="rule">—</div>
+</div>
+</div>
+<div class="eo-rg-rule" data-source="us" data-where="id=us_verdict" data-field="rule">—</div>
+<div class="eo-conf">Kepercayaan data (Fed Funds): <b class="eo-conf-badge" data-source="confidence" data-where="id=fed" data-field="label">—</b> <span class="eo-conf-detail" data-source="confidence" data-where="id=fed" data-field="detail">—</span></div>
+<div class="eo-rg-rule">Verdict di atas hanya menilai arah kebijakan The Fed; dua baris pertumbuhan dinilai terpisah. Belum ada: inflasi, tenaga kerja, dan PMI jasa AS.</div>
+</section>
+<section class="eo-panel" id="eo-regime">
+<h2 class="eo-panel-title"><span class="eo-layer">3 · Indonesia</span> Status ekonomi Indonesia saat ini</h2>
+<div class="eo-verdict">
+<span class="eo-verdict-label eo-st" data-source="regime" data-where="id=verdict" data-field="statusText">—</span>
+<span class="eo-verdict-detail" data-source="regime" data-where="id=verdict" data-field="detail">—</span>
+</div>
+<div class="eo-rg">
+<div class="eo-rg-row">
+<div class="eo-rg-top"><span class="eo-rg-label">Pertumbuhan · PDB riil, YoY (kuartal terakhir)</span><span class="eo-st" data-source="regime" data-where="id=pdb" data-field="statusText">—</span></div>
+<div class="eo-rg-val" data-source="regime" data-where="id=pdb" data-field="value">—</div>
+<div class="eo-rg-line"><span data-source="regime" data-where="id=pdb" data-field="delta">—</span></div>
+<div class="eo-rg-rule" data-source="regime" data-where="id=pdb" data-field="rule">—</div>
+</div>
+<div class="eo-rg-row">
+<div class="eo-rg-top"><span class="eo-rg-label">Pertumbuhan · leading · PMI manufaktur, rata-rata 3 bulan</span><span class="eo-st" data-source="regime" data-where="id=pmi" data-field="statusText">—</span></div>
+<div class="eo-rg-val" data-source="regime" data-where="id=pmi" data-field="value">—</div>
+<div class="eo-rg-line"><span data-source="regime" data-where="id=pmi" data-field="delta">—</span></div>
+<div class="eo-rg-rule" data-source="regime" data-where="id=pmi" data-field="rule">—</div>
+</div>
+<div class="eo-rg-row">
+<div class="eo-rg-top"><span class="eo-rg-label">Konsumen · Indeks keyakinan konsumen</span><span class="eo-st" data-source="regime" data-where="id=ikk" data-field="statusText">—</span></div>
+<div class="eo-rg-val" data-source="regime" data-where="id=ikk" data-field="value">—</div>
+<div class="eo-rg-line"><span data-source="regime" data-where="id=ikk" data-field="delta">—</span></div>
+<div class="eo-rg-rule" data-source="regime" data-where="id=ikk" data-field="rule">—</div>
+</div>
+<div class="eo-rg-row">
+<div class="eo-rg-top"><span class="eo-rg-label">Konsumen · Penjualan ritel riil, YoY</span><span class="eo-st" data-source="regime" data-where="id=ritel" data-field="statusText">—</span></div>
+<div class="eo-rg-val" data-source="regime" data-where="id=ritel" data-field="value">—</div>
+<div class="eo-rg-line"><span data-source="regime" data-where="id=ritel" data-field="delta">—</span></div>
+<div class="eo-rg-rule" data-source="regime" data-where="id=ritel" data-field="rule">—</div>
+</div>
+<div class="eo-rg-row">
+<div class="eo-rg-top"><span class="eo-rg-label">Harga · Inflasi, YoY</span><span class="eo-st" data-source="regime" data-where="id=inflasi" data-field="statusText">—</span></div>
+<div class="eo-rg-val" data-source="regime" data-where="id=inflasi" data-field="value">—</div>
+<div class="eo-rg-line"><span data-source="regime" data-where="id=inflasi" data-field="delta">—</span></div>
+<div class="eo-rg-rule" data-source="regime" data-where="id=inflasi" data-field="rule">—</div>
+</div>
+<div class="eo-rg-row">
+<div class="eo-rg-top"><span class="eo-rg-label">Kebijakan · BI Rate</span><span class="eo-st" data-source="regime" data-where="id=birate" data-field="statusText">—</span></div>
+<div class="eo-rg-val" data-source="regime" data-where="id=birate" data-field="value">—</div>
+<div class="eo-rg-line"><span data-source="regime" data-where="id=birate" data-field="delta">—</span></div>
+<div class="eo-rg-rule" data-source="regime" data-where="id=birate" data-field="rule">—</div>
+</div>
+<div class="eo-rg-row">
+<div class="eo-rg-top"><span class="eo-rg-label">Kurs · USD/IDR, rata-rata bulanan</span><span class="eo-st" data-source="regime" data-where="id=kurs" data-field="statusText">—</span></div>
+<div class="eo-rg-val" data-source="regime" data-where="id=kurs" data-field="value">—</div>
+<div class="eo-rg-line"><span data-source="regime" data-where="id=kurs" data-field="delta">—</span></div>
+<div class="eo-rg-rule" data-source="regime" data-where="id=kurs" data-field="rule">—</div>
+</div>
+<div class="eo-rg-row">
+<div class="eo-rg-top"><span class="eo-rg-label">Arus asing · Asing di saham, jumlah 3 bulan terakhir</span><span class="eo-st" data-source="regime" data-where="id=asing" data-field="statusText">—</span></div>
+<div class="eo-rg-val" data-source="regime" data-where="id=asing" data-field="value">—</div>
+<div class="eo-rg-line"><span data-source="regime" data-where="id=asing" data-field="delta">—</span></div>
+<div class="eo-rg-rule" data-source="regime" data-where="id=asing" data-field="rule">—</div>
+</div>
+</div>
+<div class="eo-rg-rule" data-source="regime" data-where="id=verdict" data-field="rule">—</div>
+<div class="eo-rg-rule">Panah menunjukkan arah angka dibanding 3 bulan sebelumnya (→ = hampir tidak berubah). Status dihitung otomatis dari data dengan aturan di bawah tiap angka; ini penilaian mekanis, bukan rekomendasi.</div>
+</section>
+<section class="eo-panel" id="eo-checklist">
+<h2 class="eo-panel-title"><span class="eo-layer">4 · BI</span> Syarat BI menurunkan suku bunga <span class="eo-chart-hint">penurunan bunga biasanya jadi pemicu pemulihan saham, terutama bank</span></h2>
+<div class="eo-ck">
+<div class="eo-ck-row">
+<div class="eo-ck-top"><span class="eo-ck-label">1. Inflasi mereda ke ≤3,0% dan bertahan</span><span class="eo-st" data-source="regime" data-where="id=c_inf" data-field="statusText">—</span></div>
+<div class="eo-rg-line" data-source="regime" data-where="id=c_inf" data-field="detail">—</div>
+</div>
+<div class="eo-ck-row">
+<div class="eo-ck-top"><span class="eo-ck-label">2. Rupiah stabil (tidak melemah)</span><span class="eo-st" data-source="regime" data-where="id=c_idr" data-field="statusText">—</span></div>
+<div class="eo-rg-line" data-source="regime" data-where="id=c_idr" data-field="detail">—</div>
+</div>
+<div class="eo-ck-row">
+<div class="eo-ck-top"><span class="eo-ck-label">3. Asing berhenti jual bersih saham</span><span class="eo-st" data-source="regime" data-where="id=c_flow" data-field="statusText">—</span></div>
+<div class="eo-rg-line" data-source="regime" data-where="id=c_flow" data-field="detail">—</div>
+</div>
+<div class="eo-ck-row">
+<div class="eo-ck-top"><span class="eo-ck-label">4. Selisih bunga dengan AS tidak menyempit</span><span class="eo-st" data-source="regime" data-where="id=c_us" data-field="statusText">—</span></div>
+<div class="eo-rg-line" data-source="regime" data-where="id=c_us" data-field="detail">—</div>
+</div>
+</div>
+<div class="eo-verdict" style="margin-top:10px">
+<span class="eo-verdict-label eo-st" data-source="regime" data-where="id=c_sum" data-field="statusText">—</span>
+<span class="eo-verdict-detail" data-source="regime" data-where="id=c_sum" data-field="detail">—</span>
+</div>
+<div class="eo-rg-rule" data-source="regime" data-where="id=c_sum" data-field="rule">—</div>
+</section>
+<section class="eo-kpis">
+<div class="eo-kpi">
+<div class="eo-kpi-label">PMI Manufaktur</div>
+<div class="eo-kpi-value" data-source="pmiLatest" data-field="value">—</div>
+<div class="eo-kpi-sub">
+<span data-source="pmiLatest" data-field="status">—</span> ·
+<span data-source="pmiLatest" data-field="month">—</span>
+</div>
+</div>
+<div class="eo-kpi">
+<div class="eo-kpi-label">PDB riil (YoY)</div>
+<div class="eo-kpi-value" data-source="gdpLatest" data-field="value">—</div>
+<div class="eo-kpi-sub"><span data-source="gdpLatest" data-field="quarter">—</span></div>
+</div>
+<div class="eo-kpi">
+<div class="eo-kpi-label">Penjualan ritel (YoY)</div>
+<div class="eo-kpi-value" data-source="retailLatest" data-field="value">—</div>
+<div class="eo-kpi-sub"><span data-source="retailLatest" data-field="month">—</span></div>
+</div>
+<div class="eo-kpi">
+<div class="eo-kpi-label">Keyakinan konsumen</div>
+<div class="eo-kpi-value" data-source="ikkLatest" data-field="value">—</div>
+<div class="eo-kpi-sub">
+<span data-source="ikkLatest" data-field="status">—</span> ·
+<span data-source="ikkLatest" data-field="month">—</span>
+</div>
+</div>
+<div class="eo-kpi">
+<div class="eo-kpi-label">BI Rate</div>
+<div class="eo-kpi-value" data-source="birateLatest" data-field="value">—</div>
+<div class="eo-kpi-sub"><span data-source="birateLatest" data-field="month">—</span></div>
+</div>
+<div class="eo-kpi">
+<div class="eo-kpi-label">Inflasi (YoY)</div>
+<div class="eo-kpi-value" data-source="infLatest" data-field="value">—</div>
+<div class="eo-kpi-sub">
+<span data-source="infLatest" data-field="status">—</span> ·
+<span data-source="infLatest" data-field="month">—</span>
+</div>
+</div>
+<div class="eo-kpi">
+<div class="eo-kpi-label">Kurs USD/IDR</div>
+<div class="eo-kpi-value" data-source="idrLatest" data-field="value">—</div>
+<div class="eo-kpi-sub">
+<span data-source="idrLatest" data-field="change">—</span> ·
+<span data-source="idrLatest" data-field="month">—</span>
+</div>
+</div>
+<div class="eo-kpi">
+<div class="eo-kpi-label">Arus asing di saham</div>
+<div class="eo-kpi-value" data-source="flowLatest" data-field="value">—</div>
+<div class="eo-kpi-sub">
+<span data-source="flowLatest" data-field="status">—</span> ·
+<span data-source="flowLatest" data-field="month">—</span>
+</div>
+</div>
+</section>
+<section class="eo-charts">
+<div class="eo-chart-block">
+<h3 class="eo-chart-title">PMI Manufaktur <span class="eo-chart-hint">&gt;50 ekspansi · &lt;50 kontraksi — leading indicator</span></h3>
+<div class="eo-chart-wrap" data-source="pmi">
+<svg id="chart-pmi" class="eo-svg"></svg>
+</div>
+<div class="eo-conf">Kepercayaan data: <b class="eo-conf-badge" data-source="confidence" data-where="id=pmi" data-field="label">—</b> <span class="eo-conf-detail" data-source="confidence" data-where="id=pmi" data-field="detail">—</span></div>
+</div>
+<div class="eo-chart-block">
+<h3 class="eo-chart-title">PDB riil, YoY <span class="eo-chart-hint">konfirmasi kuartalan — Q3 2026 belum rilis</span></h3>
+<div class="eo-chart-wrap" data-source="gdp">
+<svg id="chart-gdp" class="eo-svg"></svg>
+</div>
+<div class="eo-conf">Kepercayaan data: <b class="eo-conf-badge" data-source="confidence" data-where="id=gdp" data-field="label">—</b> <span class="eo-conf-detail" data-source="confidence" data-where="id=gdp" data-field="detail">—</span></div>
+</div>
+<div class="eo-chart-block">
+<h3 class="eo-chart-title">Penjualan ritel riil, YoY <span class="eo-chart-hint">daya beli riil konsumen</span></h3>
+<div class="eo-chart-wrap" data-source="retail">
+<svg id="chart-retail" class="eo-svg"></svg>
+</div>
+<div class="eo-conf">Kepercayaan data: <b class="eo-conf-badge" data-source="confidence" data-where="id=retail" data-field="label">—</b> <span class="eo-conf-detail" data-source="confidence" data-where="id=retail" data-field="detail">—</span></div>
+</div>
+<div class="eo-chart-block">
+<h3 class="eo-chart-title">Indeks Keyakinan Konsumen <span class="eo-chart-hint">&gt;100 optimis · &lt;100 pesimis</span></h3>
+<div class="eo-chart-wrap" data-source="ikk">
+<svg id="chart-ikk" class="eo-svg"></svg>
+</div>
+<div class="eo-conf">Kepercayaan data: <b class="eo-conf-badge" data-source="confidence" data-where="id=ikk" data-field="label">—</b> <span class="eo-conf-detail" data-source="confidence" data-where="id=ikk" data-field="detail">—</span></div>
+</div>
+<div class="eo-chart-block">
+<h3 class="eo-chart-title">Inflasi, YoY <span class="eo-chart-hint">target BI 1,5–3,5% — garis = batas atas; makin dekat, makin kecil ruang BI turunkan suku bunga</span></h3>
+<div class="eo-chart-wrap" data-source="inflation">
+<svg id="chart-inflation" class="eo-svg"></svg>
+</div>
+<div class="eo-conf">Kepercayaan data: <b class="eo-conf-badge" data-source="confidence" data-where="id=inflation" data-field="label">—</b> <span class="eo-conf-detail" data-source="confidence" data-where="id=inflation" data-field="detail">—</span></div>
+</div>
+<div class="eo-chart-block">
+<h3 class="eo-chart-title">BI Rate <span class="eo-chart-hint">kebijakan moneter — difokuskan pada stabilitas Rupiah</span></h3>
+<div class="eo-chart-wrap" data-source="birate">
+<svg id="chart-birate" class="eo-svg"></svg>
+</div>
+<div class="eo-conf">Kepercayaan data: <b class="eo-conf-badge" data-source="confidence" data-where="id=birate" data-field="label">—</b> <span class="eo-conf-detail" data-source="confidence" data-where="id=birate" data-field="detail">—</span></div>
+</div>
+<div class="eo-chart-block">
+<h3 class="eo-chart-title">BI Rate vs Fed Funds, dan selisihnya <span class="eo-chart-hint"><span style="color:#e34948">■</span> BI Rate · <span style="color:#2a78d6">■</span> Fed Funds (batas atas) · <span style="color:#8a5cd6">■</span> area = selisih. Makin lebar, makin menarik bagi investor asing; makin sempit, Rupiah makin rentan</span></h3>
+<div class="eo-chart-wrap" data-source="ratespread">
+<svg id="chart-ratespread" class="eo-svg"></svg>
+</div>
+<div class="eo-conf">Kepercayaan data (Fed Funds): <b class="eo-conf-badge" data-source="confidence" data-where="id=fed" data-field="label">—</b> <span class="eo-conf-detail" data-source="confidence" data-where="id=fed" data-field="detail">—</span></div>
+</div>
+<div class="eo-chart-block">
+<h3 class="eo-chart-title">Kurs Rupiah per USD <span class="eo-chart-hint">rata-rata bulanan — naik = Rupiah melemah; tekanan ini yang menahan BI menurunkan suku bunga</span></h3>
+<div class="eo-chart-wrap" data-source="rupiah">
+<svg id="chart-rupiah" class="eo-svg"></svg>
+</div>
+<div class="eo-conf">Kepercayaan data: <b class="eo-conf-badge" data-source="confidence" data-where="id=rupiah" data-field="label">—</b> <span class="eo-conf-detail" data-source="confidence" data-where="id=rupiah" data-field="detail">—</span></div>
+</div>
+<div class="eo-chart-block">
+<h3 class="eo-chart-title">Arus dana asing di saham, bulanan <span class="eo-chart-hint">Rp triliun — hijau = asing beli bersih (uang masuk), merah = jual bersih (uang keluar)</span></h3>
+<div class="eo-chart-wrap" data-source="flow">
+<svg id="chart-flow" class="eo-svg"></svg>
+</div>
+<div class="eo-conf">Kepercayaan data: <b class="eo-conf-badge" data-source="confidence" data-where="id=flow" data-field="label">—</b> <span class="eo-conf-detail" data-source="confidence" data-where="id=flow" data-field="detail">—</span></div>
+</div>
+<div class="eo-chart-block">
+<h3 class="eo-chart-title">Dana asing: saham vs obligasi pemerintah (SBN), bulanan <span class="eo-chart-hint"><span style="color:#2a78d6">■</span> saham · <span style="color:#eda100">■</span> SBN — Rp triliun, positif = asing beli bersih. Batang pucat = data parsial; bulan tanpa batang = belum ada data</span></h3>
+<div class="eo-chart-wrap" data-source="rotation">
+<svg id="chart-rotation" class="eo-svg"></svg>
+</div>
+<div class="eo-conf">Kepercayaan data (SBN): <b class="eo-conf-badge" data-source="confidence" data-where="id=rotation" data-field="label">—</b> <span class="eo-conf-detail" data-source="confidence" data-where="id=rotation" data-field="detail">—</span></div>
+</div>
+<div class="eo-chart-block">
+<h3 class="eo-chart-title">Kepemilikan asing di SRBI <span class="eo-chart-hint">posisi (bukan arus), Rp triliun — surat utang jangka pendek BI; hanya 4 titik tersedia</span></h3>
+<div class="eo-chart-wrap" data-source="srbi">
+<svg id="chart-srbi" class="eo-svg"></svg>
+</div>
+<div class="eo-conf">Kepercayaan data: <b class="eo-conf-badge" data-source="confidence" data-where="id=srbi" data-field="label">—</b> <span class="eo-conf-detail" data-source="confidence" data-where="id=srbi" data-field="detail">—</span></div>
+</div>
+</section>
+<section class="eo-kpis eo-derived">
+<div class="eo-kpi">
+<div class="eo-kpi-label">Suku bunga riil</div>
+<div class="eo-kpi-value" data-source="regime" data-where="id=d_real" data-field="value">—</div>
+<div class="eo-kpi-sub" style="white-space:normal"><span data-source="regime" data-where="id=d_real" data-field="detail">—</span></div>
+</div>
+<div class="eo-kpi">
+<div class="eo-kpi-label">Rupiah vs awal jendela</div>
+<div class="eo-kpi-value" data-source="regime" data-where="id=d_kurs" data-field="value">—</div>
+<div class="eo-kpi-sub" style="white-space:normal"><span data-source="regime" data-where="id=d_kurs" data-field="detail">—</span></div>
+</div>
+<div class="eo-kpi">
+<div class="eo-kpi-label">Arus asing saham, kumulatif</div>
+<div class="eo-kpi-value" data-source="regime" data-where="id=d_flow" data-field="value">—</div>
+<div class="eo-kpi-sub" style="white-space:normal"><span data-source="regime" data-where="id=d_flow" data-field="detail">—</span></div>
+</div>
+<div class="eo-kpi">
+<div class="eo-kpi-label">Bulan PMI di atas 50</div>
+<div class="eo-kpi-value" data-source="regime" data-where="id=d_pmi" data-field="value">—</div>
+<div class="eo-kpi-sub" style="white-space:normal"><span data-source="regime" data-where="id=d_pmi" data-field="detail">—</span></div>
+</div>
+<div class="eo-kpi">
+<div class="eo-kpi-label">Selisih bunga BI – Fed</div>
+<div class="eo-kpi-value" data-source="regime" data-where="id=d_spread" data-field="value">—</div>
+<div class="eo-kpi-sub" style="white-space:normal"><span data-source="regime" data-where="id=d_spread" data-field="detail">—</span></div>
+</div>
+</section>
+<section class="eo-panel" id="eo-kredit">
+<h2 class="eo-panel-title"><span class="eo-layer">8 · Kredit</span> Peta kredit bank per provinsi <span class="eo-chart-hint">ukuran lingkaran = posisi kredit · warna = pertumbuhan YoY dibanding rata-rata nasional · ◆ = daerah penghasil komoditas</span></h2>
+<div class="eo-map-chips" id="eo-kr-chips" role="group" aria-label="Pilih jenis kredit"></div>
+<div class="eo-map-box" id="eo-kr-box"><svg id="eo-kr-svg" class="eo-svg" role="img" aria-label="Peta Indonesia dengan lingkaran kredit per provinsi"></svg><div class="eo-tooltip" id="eo-kr-tip"></div></div>
+<div class="eo-map-leg" id="eo-kr-leg" style="margin-top:6px"></div>
+<div class="eo-map-cols" style="margin-top:10px">
+<div class="eo-map-detail" id="eo-kr-rank"></div>
+<div class="eo-map-ins"><h3 class="eo-nar-title">Insight kredit daerah</h3><ol id="eo-kr-ins"></ol></div>
+</div>
+<div class="eo-conf">Kepercayaan data (Kredit per provinsi): <b class="eo-conf-badge" data-source="confidence" data-where="id=kredit" data-field="label">—</b> <span class="eo-conf-detail" data-source="confidence" data-where="id=kredit" data-field="detail">—</span></div>
+<div class="eo-rg-rule">Sumber: SEKDA Bank Indonesia tabel II.7 (kredit menurut lapangan usaha, lokasi proyek), Agu 2025 vs Agu 2026; angka Agu 2026 sangat sementara. Titik lingkaran = titik tengah perkiraan provinsi.</div>
+</section>
+<section class="eo-panel" id="eo-market">
+<h2 class="eo-panel-title"><span class="eo-layer">9 · Pasar saham</span> Bagaimana harga saham merespons semua lapisan di atas <span class="eo-chart-hint">IHSG, indeks sektor keuangan, dan 4 bank besar · penutupan akhir bulan</span></h2>
+<div class="eo-verdict">
+<span class="eo-verdict-label eo-st" data-source="market" data-where="id=mk_verdict" data-field="statusText">—</span>
+<span class="eo-verdict-detail" data-source="market" data-where="id=mk_verdict" data-field="detail">—</span>
+</div>
+<div class="eo-rg-line" style="margin-bottom:10px"><span data-source="market" data-where="id=mk_verdict" data-field="delta">—</span></div>
+<div class="eo-rg">
+<div class="eo-rg-row">
+<div class="eo-rg-top"><span class="eo-rg-label">IHSG</span><span class="eo-st" data-source="market" data-where="id=mk_ihsg" data-field="statusText">—</span></div>
+<div class="eo-rg-val" data-source="market" data-where="id=mk_ihsg" data-field="value">—</div>
+<div class="eo-rg-line"><span data-source="market" data-where="id=mk_ihsg" data-field="delta">—</span></div>
+<div class="eo-rg-rule" data-source="market" data-where="id=mk_ihsg" data-field="rule">—</div>
+</div>
+<div class="eo-rg-row">
+<div class="eo-rg-top"><span class="eo-rg-label">Indeks sektor keuangan (IDXFINANCE)</span><span class="eo-st" data-source="market" data-where="id=mk_fin" data-field="statusText">—</span></div>
+<div class="eo-rg-val" data-source="market" data-where="id=mk_fin" data-field="value">—</div>
+<div class="eo-rg-line"><span data-source="market" data-where="id=mk_fin" data-field="delta">—</span></div>
+<div class="eo-rg-rule" data-source="market" data-where="id=mk_fin" data-field="rule">—</div>
+</div>
+<div class="eo-rg-row">
+<div class="eo-rg-top"><span class="eo-rg-label">BBCA</span><span class="eo-st" data-source="market" data-where="id=mk_bbca" data-field="statusText">—</span></div>
+<div class="eo-rg-val" data-source="market" data-where="id=mk_bbca" data-field="value">—</div>
+<div class="eo-rg-line"><span data-source="market" data-where="id=mk_bbca" data-field="delta">—</span></div>
+<div class="eo-rg-rule" data-source="market" data-where="id=mk_bbca" data-field="rule">—</div>
+</div>
+<div class="eo-rg-row">
+<div class="eo-rg-top"><span class="eo-rg-label">Penggerak terkuat IHSG di data ini</span><span class="eo-st" data-source="market" data-where="id=mk_link" data-field="statusText">—</span></div>
+<div class="eo-rg-val" data-source="market" data-where="id=mk_link" data-field="value">—</div>
+<div class="eo-rg-line"><span data-source="market" data-where="id=mk_link" data-field="delta">—</span></div>
+<div class="eo-rg-rule" data-source="market" data-where="id=mk_link" data-field="rule">—</div>
+</div>
+</div>
+<div class="eo-rg-rule" data-source="market" data-where="id=mk_verdict" data-field="rule">—</div>
+<div class="eo-mk-charts">
+<div class="eo-mk-chart">
+<h3 class="eo-chart-title">IHSG vs arus asing di saham <span class="eo-chart-hint">garis = IHSG · batang = net asing (Rp triliun)</span></h3>
+<div class="eo-chart-wrap" data-source="saham"><svg id="chart-mk-flow" class="eo-svg"></svg></div>
+</div>
+<div class="eo-mk-chart">
+<h3 class="eo-chart-title">Saham bank vs IHSG <span class="eo-chart-hint">diindeks, bulan pertama = 100</span></h3>
+<div class="eo-chart-wrap" data-source="saham"><svg id="chart-mk-banks" class="eo-svg"></svg></div>
+<div class="eo-map-leg" id="eo-mk-leg"></div>
+</div>
+</div>
+<div class="eo-conf">Kepercayaan data (Saham): <b class="eo-conf-badge" data-source="confidence" data-where="id=saham" data-field="label">—</b> <span class="eo-conf-detail" data-source="confidence" data-where="id=saham" data-field="detail">—</span></div>
+<div class="eo-rg-rule">Harga ditarik otomatis dari Google Finance lewat spreadsheet. Korelasi dihitung dari perubahan bulanan dengan sedikit titik data, jadi petunjuk, bukan bukti sebab-akibat. Bukan rekomendasi investasi.</div>
+</section>
+<section class="eo-panel" id="eo-sektor">
+<h2 class="eo-panel-title"><span class="eo-layer">10 · Komposisi IHSG</span> Sektor apa yang membentuk IHSG, dan berapa persen <span class="eo-chart-hint">bobot kapitalisasi pasar per sektor, akhir Maret 2026</span></h2>
+<div class="eo-q-list"><div class="eo-q"><div class="eo-q-top"><b>Bobot sektor dalam IHSG</b><span class="eo-conf-badge conf-sedang" id="eo-sek-c">–</span></div><div id="eo-sek-b"></div></div></div>
+</section>
+
+<section class="eo-panel" id="eo-tambang">
+<h2 class="eo-panel-title"><span class="eo-layer">11 · Saham tambang</span> Apakah saham tambang mengikuti harga komoditasnya? <span class="eo-chart-hint">indeks sektor energi dan bahan baku, 4 saham batu bara, 4 saham logam · penutupan akhir bulan</span></h2>
+<div class="eo-verdict">
+<span class="eo-verdict-label eo-st" data-source="tambang_s" data-where="id=tb_verdict" data-field="statusText">—</span>
+<span class="eo-verdict-detail" data-source="tambang_s" data-where="id=tb_verdict" data-field="detail">—</span>
+</div>
+<div class="eo-rg-line" style="margin-bottom:10px"><span data-source="tambang_s" data-where="id=tb_verdict" data-field="delta">—</span></div>
+<div class="eo-rg">
+<div class="eo-rg-row">
+<div class="eo-rg-top"><span class="eo-rg-label">Indeks sektor energi (IDXENERGY)</span><span class="eo-st" data-source="tambang_s" data-where="id=tb_energy" data-field="statusText">—</span></div>
+<div class="eo-rg-val" data-source="tambang_s" data-where="id=tb_energy" data-field="value">—</div>
+<div class="eo-rg-line"><span data-source="tambang_s" data-where="id=tb_energy" data-field="delta">—</span></div>
+<div class="eo-rg-rule" data-source="tambang_s" data-where="id=tb_energy" data-field="rule">—</div>
+</div>
+<div class="eo-rg-row">
+<div class="eo-rg-top"><span class="eo-rg-label">Indeks bahan baku (IDXBASIC)</span><span class="eo-st" data-source="tambang_s" data-where="id=tb_basic" data-field="statusText">—</span></div>
+<div class="eo-rg-val" data-source="tambang_s" data-where="id=tb_basic" data-field="value">—</div>
+<div class="eo-rg-line"><span data-source="tambang_s" data-where="id=tb_basic" data-field="delta">—</span></div>
+<div class="eo-rg-rule" data-source="tambang_s" data-where="id=tb_basic" data-field="rule">—</div>
+</div>
+<div class="eo-rg-row">
+<div class="eo-rg-top"><span class="eo-rg-label">Keranjang batu bara</span><span class="eo-st" data-source="tambang_s" data-where="id=tb_coal" data-field="statusText">—</span></div>
+<div class="eo-rg-val" data-source="tambang_s" data-where="id=tb_coal" data-field="value">—</div>
+<div class="eo-rg-line"><span data-source="tambang_s" data-where="id=tb_coal" data-field="delta">—</span></div>
+<div class="eo-rg-rule" data-source="tambang_s" data-where="id=tb_coal" data-field="rule">—</div>
+</div>
+<div class="eo-rg-row">
+<div class="eo-rg-top"><span class="eo-rg-label">Keranjang logam (nikel, emas, tembaga)</span><span class="eo-st" data-source="tambang_s" data-where="id=tb_metal" data-field="statusText">—</span></div>
+<div class="eo-rg-val" data-source="tambang_s" data-where="id=tb_metal" data-field="value">—</div>
+<div class="eo-rg-line"><span data-source="tambang_s" data-where="id=tb_metal" data-field="delta">—</span></div>
+<div class="eo-rg-rule" data-source="tambang_s" data-where="id=tb_metal" data-field="rule">—</div>
+</div>
+</div>
+<div class="eo-rg-row" style="margin-top:8px">
+<div class="eo-rg-top"><span class="eo-rg-label">Keterkaitan dengan harga komoditas dunia</span><span class="eo-st" data-source="tambang_s" data-where="id=tb_link" data-field="statusText">—</span></div>
+<div class="eo-rg-val" data-source="tambang_s" data-where="id=tb_link" data-field="value">—</div>
+<div class="eo-rg-line"><span data-source="tambang_s" data-where="id=tb_link" data-field="delta">—</span></div>
+<div class="eo-rg-rule" data-source="tambang_s" data-where="id=tb_link" data-field="rule">—</div>
+</div>
+<div class="eo-rg-row" style="margin-top:8px">
+<div class="eo-rg-top"><span class="eo-rg-label">Seberapa searah dengan IHSG dan arus asing</span><span class="eo-st" data-source="tambang_s" data-where="id=tb_ihsg" data-field="statusText">—</span></div>
+<div class="eo-rg-val" data-source="tambang_s" data-where="id=tb_ihsg" data-field="value">—</div>
+<div class="eo-rg-line"><span data-source="tambang_s" data-where="id=tb_ihsg" data-field="delta">—</span></div>
+<div class="eo-rg-rule" data-source="tambang_s" data-where="id=tb_ihsg" data-field="rule">—</div>
+</div>
+<div class="eo-rg-rule" data-source="tambang_s" data-where="id=tb_verdict" data-field="rule">—</div>
+<div class="eo-charts" style="margin-top:12px">
+<div class="eo-chart-block">
+<h3 class="eo-chart-title">IHSG vs arus asing di saham <span class="eo-chart-hint eo-lg-wrap" id="eo-tb-leg-flow"></span> <span class="eo-chart-hint">garis = IHSG · batang = net asing (Rp triliun)</span></h3>
+<div class="eo-chart-wrap" data-source="saham"><svg id="chart-tb-flow" class="eo-svg"></svg></div>
+<div class="eo-conf">Kepercayaan data: Saham <b class="eo-conf-badge" data-source="confidence" data-where="id=saham" data-field="label">—</b> · Arus asing <b class="eo-conf-badge" data-source="confidence" data-where="id=flow" data-field="label">—</b></div>
+</div>
+<div class="eo-chart-block">
+<h3 class="eo-chart-title">Saham tambang vs IHSG <span class="eo-chart-hint eo-lg-wrap" id="eo-tb-leg-ihsg"></span> <span class="eo-chart-hint">diindeks, Okt'25 = 100 · garis putus = IHSG</span></h3>
+<div class="eo-chart-wrap" data-source="tambang"><svg id="chart-tb-ihsg" class="eo-svg"></svg></div>
+<div class="eo-conf">Kepercayaan data: Saham tambang <b class="eo-conf-badge" data-source="confidence" data-where="id=tambang" data-field="label">—</b> · Saham <b class="eo-conf-badge" data-source="confidence" data-where="id=saham" data-field="label">—</b></div>
+</div>
+<div class="eo-chart-block">
+<h3 class="eo-chart-title">Saham batu bara vs harga batu bara <span class="eo-chart-hint eo-lg-wrap" id="eo-tb-leg-coal"></span> <span class="eo-chart-hint">diindeks, Okt'25 = 100 · garis putus = harga dunia</span></h3>
+<div class="eo-chart-wrap" data-source="tambang"><svg id="chart-tb-coal" class="eo-svg"></svg></div>
+<div class="eo-conf">Kepercayaan data: Saham tambang <b class="eo-conf-badge" data-source="confidence" data-where="id=tambang" data-field="label">—</b> · Komoditas <b class="eo-conf-badge" data-source="confidence" data-where="id=komoditas" data-field="label">—</b></div>
+</div>
+<div class="eo-chart-block">
+<h3 class="eo-chart-title">Saham logam vs harga nikel <span class="eo-chart-hint eo-lg-wrap" id="eo-tb-leg-metal"></span> <span class="eo-chart-hint">diindeks, Okt'25 = 100 · garis putus = harga dunia</span></h3>
+<div class="eo-chart-wrap" data-source="tambang"><svg id="chart-tb-metal" class="eo-svg"></svg></div>
+<div class="eo-conf">Kepercayaan data: Saham tambang <b class="eo-conf-badge" data-source="confidence" data-where="id=tambang" data-field="label">—</b> · Komoditas <b class="eo-conf-badge" data-source="confidence" data-where="id=komoditas" data-field="label">—</b></div>
+</div>
+<div class="eo-chart-block eo-chart-wide">
+<h3 class="eo-chart-title">Peringkat 8 saham tambang <span class="eo-chart-hint">perubahan harga sejak Okt'25 dan 3 bulan terakhir</span></h3>
+<div id="eo-tb-rank"></div>
+<div class="eo-conf">Kepercayaan data: Saham tambang <b class="eo-conf-badge" data-source="confidence" data-where="id=tambang" data-field="label">—</b></div>
+</div>
+</div>
+<div class="eo-rg-rule">Harga ditarik otomatis dari Google Finance lewat tab "Saham Tambang". Harga belum disesuaikan aksi korporasi (stock split, dividen), jadi lonjakan atau penurunan tajam satu bulan perlu dicek ke berita. Belum ada data laba atau valuasi (PER/PBV), jadi ini baru melihat harga, bukan murah atau mahal. Korelasi dihitung dari sedikit titik data dan bukan bukti sebab-akibat. Bukan rekomendasi investasi.</div>
+</section>
+<section class="eo-panel" id="eo-uang">
+<h2 class="eo-panel-title"><span class="eo-layer">12 · Uang & valuasi</span> Yield obligasi, kepemilikan asing, dan valuasi IHSG <span class="eo-chart-hint">data tambahan, titik datanya masih sedikit dan sebagian dari artikel</span></h2>
+<div class="eo-q-list">
+<div class="eo-q"><div class="eo-q-top"><b>Yield SBN 10 tahun dan selisihnya dengan obligasi AS</b><span class="eo-conf-badge conf-sedang" id="eo-uang-c1">–</span></div><div id="eo-uang-b1"></div></div>
+<div class="eo-q"><div class="eo-q-top"><b>Kepemilikan asing di saham dan negara asalnya</b><span class="eo-conf-badge conf-sedang" id="eo-uang-c2">–</span></div><div id="eo-uang-b2"></div></div>
+<div class="eo-q"><div class="eo-q-top"><b>Valuasi IHSG (PER dan PBV)</b><span class="eo-conf-badge conf-rendah" id="eo-uang-c3">–</span></div><div id="eo-uang-b3"></div></div>
+</div>
+</section>
+<section class="eo-panel" id="eo-tanya">
+<h2 class="eo-panel-title"><span class="eo-layer">13 · Pertanyaan</span> Pertanyaan yang perlu dijawab sebelum membeli saham <span class="eo-chart-hint">tiga pertanyaan berurutan, data yang sudah ada, dan data yang masih kosong</span></h2>
+<div class="eo-q-list">
+<div class="eo-q"><div class="eo-q-top"><b>1 · Apakah kondisi mendukung risiko saham Indonesia?</b><span class="eo-conf-badge conf-sedang">Cukup terisi, dengan catatan</span></div>
+<div class="eo-q-line"><span>Dijawab oleh</span> kartu 3 · Indonesia, 4 · BI, 12 · Uang &amp; valuasi, dan Peta (arus asing, kurs, selisih bunga, yield SBN, kepemilikan asing, PER).</div>
+<div class="eo-q-line"><span>Bacaan sementara</span> <b id="eo-q1-read">Memuat…</b> <span style="min-width:0;text-transform:none;letter-spacing:0;font-size:inherit">Lihat syarat yang dipantau di bawah. Ini indikasi dari data yang ada, bukan rekomendasi.</span></div>
+<div class="eo-q-line"><span>Sudah terisi</span> yield SBN kini 12 titik tanggal (Okt 2025 sampai Okt 2026), dan PER IHSG sudah punya pembanding rata-rata historis dari beberapa sumber (sekitar 40–44% di bawah rata-rata 10 tahun).</div>
+<div class="eo-q-line"><span>Risiko</span> asing net sell sekitar Rp 92 T sepanjang 2026 (s.d. 21 Okt), hanya sekitar 1% dari kapitalisasi pasar Rp 9.379 T, jadi bukan penyebab utama turunnya IHSG, tetapi tetap sinyal karena berlangsung terus. Ada juga skenario dana pasif keluar bila MSCI mengubah klasifikasi (sekitar US$4–7,5 miliar atau Rp 65–125 T, perkiraan media, bukan angka MSCI). Porsi 4 bank besar (Rp 67,2 T) hanya dari satu blog dan basisnya belum cocok dengan total, jadi belum dijadikan dasar. Valuasi murah tidak menghilangkan risiko ini.</div>
+<div class="eo-q-line"><span>Masih kurang</span> deret yield bulanan resmi (Kemenkeu atau BI), rata-rata historis PER dari laporan aslinya (sekarang kutipan blog), dan arus asing menurut negara asal (tidak diterbitkan publik; pendekatan terdekat ada di kartu 12).</div></div>
+<div class="eo-q"><div class="eo-q-top"><b>2 · Sektor mana yang diuntungkan kondisi ini?</b><span class="eo-conf-badge conf-sedang">Sebagian</span></div>
+<div class="eo-q-line"><span>Dijawab oleh</span> kartu 8 · Kredit, 9 · Pasar saham (bank), 10 · Komposisi IHSG, 11 · Saham tambang.</div>
+<div class="eo-q-line"><span>Belum ada</span> sektor konsumer, telekomunikasi, properti; harga acuan batu bara (HBA) dan ekspor batu bara menurut negara tujuan; laba per sektor.</div></div>
+<div class="eo-q"><div class="eo-q-top"><b>3 · Saham mana, kapan masuk, dan berapa besar?</b><span class="eo-conf-badge conf-rendah">Belum ada</span></div>
+<div class="eo-q-line"><span>Dijawab oleh</span> belum ada kartu. Ini bagian yang tidak bisa dijawab makro.</div>
+<div class="eo-q-line"><span>Sudah ada</span> PER dan PBV IHSG dibanding sejarahnya (kartu 12, indeks keseluruhan). <span>Belum ada</span> PER dan PBV per saham, ROE, margin bunga bersih, kredit bermasalah (NPL), kecukupan modal, laba kuartalan, dividen dan yield, likuiditas saham, serta porsi saham dari total aset Anda.</div></div>
+</div>
+<h3 class="eo-nar-title" style="margin-top:14px">Syarat yang dipantau dari data sekarang</h3>
+<div class="eo-q-sub">Ambang acuan buatan kami dari data 12 bulan. Bukan sinyal baku dan bukan rekomendasi.</div>
+<div class="eo-q-conds" id="eo-tanya-conds"><div class="eo-q-line">Memuat…</div></div>
+<h3 class="eo-nar-title" style="margin-top:14px">Disiplin proses</h3>
+<ol class="eo-q-rules"><li>Tulis tesis satu kalimat dan syarat batalnya sebelum membeli.</li><li>Masuk bertahap, jangan sekaligus.</li><li>Tentukan porsi saham Indonesia dari total aset, bukan dari semangat.</li><li>Angka 12 bulan menunjukkan arah, bukan ramalan.</li></ol>
+</section>
+<section class="eo-legend">
+<div class="eo-legend-item"><span class="eo-dot" style="background: var(--eo-c-pmi)"></span>PMI Manufaktur</div>
+<div class="eo-legend-item"><span class="eo-dot" style="background: var(--eo-c-gdp)"></span>PDB riil</div>
+<div class="eo-legend-item"><span class="eo-dot" style="background: var(--eo-c-retail)"></span>Penjualan ritel</div>
+<div class="eo-legend-item"><span class="eo-dot" style="background: var(--eo-c-ikk)"></span>Keyakinan konsumen</div>
+<div class="eo-legend-item"><span class="eo-dot" style="background: var(--eo-c-birate)"></span>BI Rate</div>
+<div class="eo-legend-item"><span class="eo-dot" style="background: var(--eo-c-inf)"></span>Inflasi</div>
+<div class="eo-legend-item"><span class="eo-dot" style="background: var(--eo-c-idr)"></span>Kurs Rupiah</div>
+<div class="eo-legend-item"><span class="eo-dot" style="background: var(--eo-c-flow)"></span>Arus asing (saham)</div>
+</section>
+</div>
+</div>
+
+<!-- Order matters: d3 and dash first, then data (loaders), then drawings. -->
+<script src="vendor/d3.min.js"></script>
+<script src="js/dash-shim.js"></script>
+<script src="js/admin.js"></script>
+<script src="js/data/loaders.js"></script>
+<script src="js/sections/01-core.js"></script>
+<script src="js/sections/02-folding.js"></script>
+<script src="js/sections/03-questions.js"></script>
+<script src="js/sections/04-money-valuation.js"></script>
+<script src="js/sections/05-sectors.js"></script>
+</body>
+</html>

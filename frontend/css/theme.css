@@ -1,0 +1,52 @@
+/*
+ * Theme tokens. The dashboard styles (dashboard.css) only use these variables,
+ * so changing a colour here changes it everywhere. Dark mode follows the
+ * computer's setting; force one with <html data-theme="light|dark">.
+ */
+:root {
+  --color-bg: #f7f6f2;
+  --color-panel: #ffffff;
+  --color-fg: #1f1e1c;
+  --color-fg-muted: #6b6860;
+  --color-border-line: #e3e0d8;
+  --color-ok: #138a5e;
+  --color-warn: #b97800;
+  --color-bad: #c9383a;
+  --font-anthropic-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-anthropic-serif: Georgia, "Times New Roman", serif;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-bg: #181816;
+    --color-panel: #222220;
+    --color-fg: #ecebe6;
+    --color-fg-muted: #a3a097;
+    --color-border-line: #3a3935;
+    --color-ok: #3fc48f;
+    --color-warn: #e6a92e;
+    --color-bad: #f0676a;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --color-bg: #181816;
+  --color-panel: #222220;
+  --color-fg: #ecebe6;
+  --color-fg-muted: #a3a097;
+  --color-border-line: #3a3935;
+  --color-ok: #3fc48f;
+  --color-warn: #e6a92e;
+  --color-bad: #f0676a;
+  color-scheme: dark;
+}
+
+html, body { margin: 0; }
+body {
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-anthropic-sans);
+}
+#dash-root { max-width: 1180px; margin: 0 auto; padding: 16px; box-sizing: border-box; }
