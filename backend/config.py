@@ -106,6 +106,8 @@ class Dataset:
     write: str = "none"               # append | fill | none
     key: tuple[int, ...] = (0,)       # column offset(s) in the range that identify a row, e.g. the period
     updater: dict[str, Any] | None = None
+    spreadsheet: str = ""             # Google spreadsheet id this dataset lives in
+    group: str = "macro"              # which page loads it: macro (dashboard) or stock
     # ---- publishing schedule, for the metadata page (backend/freshness.py)
     frequency: str = "snapshot"       # monthly | quarterly | irregular | snapshot | static
     lag_days: int = 0                 # days after a period ends until it is usually published
@@ -127,12 +129,17 @@ class Dataset:
 
 @dataclass
 class AppConfig:
-    spreadsheet_id: str
+    spreadsheet_id: str                                   # the default (main) spreadsheet
     datasets: dict[str, Dataset] = field(default_factory=dict)
+    spreadsheets: dict[str, str] = field(default_factory=dict)  # alias -> id
 
     @property
     def sheet_url(self) -> str:
         return f"https://docs.google.com/spreadsheets/d/{self.spreadsheet_id}/edit"
+
+    @staticmethod
+    def url_of(spreadsheet_id: str) -> str:
+        return f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/edit"
 
 
 def _parse_key(value: Any) -> tuple[int, ...]:
@@ -143,7 +150,7 @@ def _parse_key(value: Any) -> tuple[int, ...]:
 
 def load_config(path: Path = CONFIG_PATH) -> AppConfig:
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    cfg = AppConfig(spreadsheet_id=str(raw["spreadsheet_id"]))
+    cfg = AppConfig(spreadsheet_id=str(raw["spreadsheet_id"]), spreadsheets={k: str(v) for k, v in (raw.get("spreadsheets") or {}).items()})
     for ds_id, d in (raw.get("datasets") or {}).items():
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", ds_id):
             raise ValueError(f"Dataset id '{ds_id}' may only use letters, digits, _ and -")
@@ -171,6 +178,9 @@ def load_config(path: Path = CONFIG_PATH) -> AppConfig:
             write=write,
             key=_parse_key(d.get("key", 0)),
             updater=d.get("updater"),
+            # "spreadsheet:" may be an alias from the spreadsheets: list or a raw id
+            spreadsheet=cfg.spreadsheets.get(str(d.get("spreadsheet", "")), str(d.get("spreadsheet") or cfg.spreadsheet_id)),
+            group=str(d.get("group", "macro")),
             frequency=freq,
             lag_days=int(d.get("lag_days", 0)),
             stale_after_days=d.get("stale_after_days"),

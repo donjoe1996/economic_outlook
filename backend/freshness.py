@@ -33,6 +33,7 @@ _RE_QUARTER = re.compile(r"^Q([1-4])'(\d{2})\b", re.I)                         #
 _RE_ISO = re.compile(r"^(\d{4})-(\d{2})-(\d{2})")                              # 2026-10-30
 _RE_DAY = re.compile(rf"^(\d{{1,2}})\s+({_MON})[a-z]*\.?\s+(\d{{4}})\b", re.I)  # 30 Okt 2026
 _RE_MONTH_YYYY = re.compile(rf"^({_MON})[a-z]*\s+(\d{{4}})\b", re.I)          # Des 2025
+_RE_US = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{4})")                          # 11/20/2026 16:00:00 (Google Finance)
 
 
 def month_end(y: int, m: int) -> date:
@@ -58,6 +59,11 @@ def parse_period(text: str) -> date | None:
     if m := _RE_DAY.match(t):
         try:
             return date(int(m[3]), _MONTHS[m[2].lower()[:3]], int(m[1]))
+        except ValueError:
+            return None
+    if m := _RE_US.match(t):
+        try:
+            return date(int(m[3]), int(m[1]), int(m[2]))
         except ValueError:
             return None
     if m := _RE_MONTH_YYYY.match(t):

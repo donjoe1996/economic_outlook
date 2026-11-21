@@ -17,6 +17,8 @@
 #   key     Column(s) (0 = first column of the range) that identify a row.
 #           Usually the period. A list makes a composite key.
 #   updater Optional automatic fetcher (see backend/updaters/).
+#   group   macro (default, loaded by the dashboard) or stock (loaded by
+#           stock.html). Keeps 3,000-row price tables off the dashboard.
 #
 # Publishing schedule (for the Metadata page, backend/freshness.py):
 #   frequency         monthly | quarterly | irregular | snapshot | static
@@ -32,7 +34,14 @@
 # frontend/js/data/loaders.js + a drawing in frontend/js/sections/.
 # ---------------------------------------------------------------------------
 
-spreadsheet_id: "1L5maHUBilVeH5Uf3IOKJ4A1dHLWr8IqeyXqHE-UbEyw"
+spreadsheet_id: "1L5maHUBilVeH5Uf3IOKJ4A1dHLWr8IqeyXqHE-UbEyw"   # the default (main) spreadsheet
+
+# Other spreadsheets, by a short name. A dataset picks one with
+# "spreadsheet: <name>"; without it, the main spreadsheet above is used.
+spreadsheets:
+  main: "1L5maHUBilVeH5Uf3IOKJ4A1dHLWr8IqeyXqHE-UbEyw"
+  bmri: "1Oj0CbbXxoWlnUqvdeJMM0BEj3OvUreBvr3kMsPGYTIs"        # "BMRI prices (live)"
+  bank_peers: "1K3q7sd97i9N5iatpSPp-w4NToFAMTapljOMYwq96ArA"  # "IDX bank peers prices (live)"
 
 datasets:
 
@@ -361,3 +370,99 @@ datasets:
     description: Bacaan data yang ditulis skill economic-insights (.claude/skills/economic-insights), setiap angkanya dicek terhadap scripts/digest.py.
     file: data/insights/latest.json
     frequency: "static"
+
+  # ======================== Stocks (group: stock, page stock.html) ========================
+  # To add a stock: copy the bmri_* block, point "spreadsheet:" at its sheet,
+  # and add frontend/js/stock/<CODE>.js (its name and narrative).
+
+  cpi:
+    title: Indeks Harga Konsumen (IHK)
+    description: IHK bulanan BPS (2022=100). Dipakai untuk menyatakan harga dan dividen dalam rupiah hari ini.
+    range: "IHK!A2:C"
+    write: append
+    group: stock
+    frequency: "monthly"
+    lag_days: 3
+    release: "BPS, hari kerja pertama bulan berikutnya"
+    release_url: "https://www.bps.go.id/id/pressrelease"
+
+  bmri_price:
+    title: BMRI harga penutupan harian
+    description: Harga penutupan harian Bank Mandiri sejak 2016, dari rumus GOOGLEFINANCE di sheet "BMRI prices (live)".
+    spreadsheet: bmri
+    range: "'Untitled'!A2:B"
+    write: none
+    group: stock
+    frequency: "irregular"
+    stale_after_days: 5
+    release: "Rumus GOOGLEFINANCE, otomatis tiap hari bursa"
+
+  bmri_fund:
+    title: BMRI fundamental terkini
+    description: Laba, ekuitas, saham beredar, dividen dan rasio bank (ROE, NIM, NPL, CAR, ...) dari laporan terakhir. Satu baris per angka.
+    spreadsheet: bmri
+    range: "'Fundamental'!A2:E"
+    write: append
+    group: stock
+    value_col: 2
+    frequency: "snapshot"
+    release: "Laporan keuangan Bank Mandiri (H1 2026); perbarui tiap rilis kuartalan"
+
+  bmri_fh:
+    title: BMRI riwayat fundamental
+    description: Nilai buku, laba dan dividen per saham tiap akhir tahun (plus laporan terakhir), untuk sejarah PBV dan PER.
+    spreadsheet: bmri
+    range: "'Riwayat fundamental'!A2:D"
+    write: append
+    group: stock
+    frequency: "irregular"
+    stale_after_days: 200
+    release: "Laporan tahunan dan semesteran Bank Mandiri"
+
+  bmri_dv:
+    title: BMRI riwayat dividen
+    description: Setiap pembayaran dividen (interim dan final) per saham, disesuaikan dengan stock split.
+    spreadsheet: bmri
+    range: "'Dividen'!A2:E"
+    write: append
+    key: [0, 2]
+    value_col: 3
+    group: stock
+    frequency: "irregular"
+    stale_after_days: 400
+    release: "Keputusan RUPS dan pengumuman BEI"
+
+  bmri_flow:
+    title: BMRI dan pasar, arus asing
+    description: Beli/jual bersih asing di BMRI (harian, mingguan), seluruh pasar, dan peristiwa penting (MSCI), Rp miliar.
+    spreadsheet: bmri
+    range: "'Arus asing'!A2:H"
+    write: append
+    key: [0, 1, 2]
+    period_col: 1
+    value_col: 2
+    group: stock
+    frequency: "irregular"
+    stale_after_days: 14
+    release: "Data BEI/Stockbit yang dikutip media; tambahkan tiap pekan"
+
+  bank_peers_price:
+    title: Bank pembanding, harga harian
+    description: Harga penutupan harian BBCA, BBRI, BMRI, BBNI (blok Tanggal/Close berurutan), dari sheet "IDX bank peers prices (live)".
+    spreadsheet: bank_peers
+    range: "'Untitled'!A2:K"
+    write: none
+    group: stock
+    frequency: "irregular"
+    stale_after_days: 5
+    release: "Rumus GOOGLEFINANCE, otomatis tiap hari bursa"
+
+  bank_peers_fund:
+    title: Bank pembanding, fundamental
+    description: Nilai buku, laba, dividen dan rasio utama empat bank besar dari laporan terakhir (H1 2026).
+    spreadsheet: bank_peers
+    range: "'Fundamental'!A2:L"
+    write: fill
+    group: stock
+    frequency: "snapshot"
+    release: "Laporan keuangan masing-masing bank; perbarui tiap rilis kuartalan"

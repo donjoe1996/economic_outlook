@@ -89,11 +89,19 @@ class Service:
         return ds
 
     # ---------------------------------------------------------------- read
-    def snapshot(self) -> dict:
-        """Everything the page needs, from the local cache (no network)."""
+    def snapshot(self, group: str | None = None, ids: list[str] | None = None) -> dict:
+        """Everything a page needs, from the local cache (no network).
+
+        group: "macro" for the dashboard, "stock" for the stock pages.
+        ids:   extra datasets by id (e.g. the stock page's macro context).
+        Neither given: everything.
+        """
         out = {}
         for ds in self.cfg.datasets.values():
-            item = {"title": ds.title, "description": ds.description, "kind": ds.kind, "write": ds.write}
+            if (group or ids) and not (ds.group == group or (ids and ds.id in ids)):
+                continue
+            item = {"title": ds.title, "description": ds.description, "kind": ds.kind, "write": ds.write,
+                    "sheet_url": self.cfg.url_of(ds.spreadsheet) if ds.kind == "sheet" else None}
             if ds.kind == "file":
                 try:
                     item.update(status="ok", answer=json.loads(ds.file.read_text(encoding="utf-8")))
@@ -135,9 +143,14 @@ class Service:
         rows: dict[str, int] = {}
         failed: dict[str, str] = {}
         progress.count(0, len(targets))
-        self._remember_tabs()
-        for start in range(0, len(targets), batch):
-            group = targets[start:start + batch]
+        self._remember_tabs({d.spreadsheet for d in targets})
+        # a batch read covers one spreadsheet, so batch within each spreadsheet
+        batches: list[list[Dataset]] = []
+        for sid in dict.fromkeys(d.spreadsheet for d in targets):
+            same = [d for d in targets if d.spreadsheet == sid]
+            batches += [same[i:i + batch] for i in range(0, len(same), batch)]
+        done = 0
+        for group in batches:
             progress.step("Membaca dari Google Sheet: " + ", ".join(d.title for d in group))
             try:
                 results = self._get_with_retry(group, progress)
@@ -164,7 +177,8 @@ class Service:
                     failed[d.id] = msg
                     self.cache.record(d.id, "pull", False, msg)
                     progress.warn(f"{d.title}: tidak bisa ditarik ({msg}). Salinan lama tetap dipakai.")
-            progress.count(start + len(group), len(targets))
+            done += len(group)
+            progress.count(done, len(targets))
         return {"rows": rows, "failed": failed}
 
     def _get_with_retry(self, group: list[Dataset], progress: Progress) -> list:
@@ -176,19 +190,24 @@ class Service:
         def note(attempt, exc, delay):
             progress.step(f"Percobaan {attempt} gagal ({short_error(exc)}); coba lagi dalam {delay:.0f} dtk")
 
-        return with_retry(lambda: self.sheets.batch_get(self.cfg.spreadsheet_id, ranges), on_retry=note)
+        return with_retry(lambda: self.sheets.batch_get(group[0].spreadsheet, ranges), on_retry=note)
 
-    def _remember_tabs(self) -> None:
+    def _remember_tabs(self, spreadsheet_ids: set[str]) -> None:
         """Tab ids let the metadata page link straight to each tab. Optional."""
         tab_ids = getattr(self.sheets, "tab_ids", None)
         if not tab_ids:
             return
-        try:
-            self.cache.put_meta({"tabs": tab_ids(self.cfg.spreadsheet_id)})
-        except SheetsNotAuthorized:
-            raise
-        except Exception:
-            pass  # links fall back to the spreadsheet itself
+        tabs = self.cache.meta().get("tabs", {})
+        if tabs and not all(isinstance(v, dict) for v in tabs.values()):
+            tabs = {}  # older single-spreadsheet format
+        for sid in spreadsheet_ids:
+            try:
+                tabs[sid] = tab_ids(sid)
+            except SheetsNotAuthorized:
+                raise
+            except Exception:
+                pass  # links fall back to the spreadsheet itself
+        self.cache.put_meta({"tabs": tabs})
 
     def describe(self) -> list[dict]:
         """Datasets with their columns, for the 'add data' form."""
@@ -231,12 +250,14 @@ class Service:
         today = today or date.today()
         status = self.cache.status()
         tabs = self.cache.meta().get("tabs", {})
+        if tabs and not all(isinstance(v, dict) for v in tabs.values()):
+            tabs = {}
         items = []
         for ds in self.cfg.datasets.values():
             st = status.get(ds.id, {})
             item = {
                 "id": ds.id, "title": ds.title, "description": ds.description, "kind": ds.kind,
-                "write": ds.write, "frequency": ds.frequency, "lag_days": ds.lag_days,
+                "write": ds.write, "group": ds.group, "frequency": ds.frequency, "lag_days": ds.lag_days,
                 "stale_after_days": ds.stale_after_days, "release": ds.release,
                 "release_url": ds.release_url, "note": ds.note, "updater": (ds.updater or {}).get("type"),
                 "last_pull": st.get("pull"), "last_check": st.get("check"),
@@ -248,8 +269,8 @@ class Service:
                 item.update(status=f.status, status_text=f.text)
                 items.append(item)
                 continue
-            if ds.range.tab in tabs:
-                item["sheet_link"] = f"{self.cfg.sheet_url}#gid={tabs[ds.range.tab]}"
+            sheet_tabs = tabs.get(ds.spreadsheet, {})
+            item["sheet_link"] = self.cfg.url_of(ds.spreadsheet) + (f"#gid={sheet_tabs[ds.range.tab]}" if ds.range.tab in sheet_tabs else "")
             doc = self.cache.get(ds.id)
             if doc is None:
                 item.update(status="error", status_text="Belum pernah ditarik dari Sheet.")
@@ -309,7 +330,7 @@ class Service:
             raise UserError(f"Kolom kunci (kolom {names}) wajib diisi, misalnya periode.")
 
         progress.step(f"Membaca tabel '{ds.title}' terbaru dari Sheet")
-        live = [_pad(r, rng.width) for r in self.sheets.batch_get(self.cfg.spreadsheet_id, [rng.a1()])[0]]
+        live = [_pad(r, rng.width) for r in self.sheets.batch_get(ds.spreadsheet, [rng.a1()])[0]]
         progress.step("Memeriksa isian")
 
         # Check numbers against columns that hold only numbers today.
@@ -342,7 +363,7 @@ class Service:
 
         if cells:
             progress.step(f"Menulis {len(cells)} sel ke baris {sheet_row} ({new[ds.key[0]]})")
-            self.sheets.write_cells(self.cfg.spreadsheet_id, cells)
+            self.sheets.write_cells(ds.spreadsheet, cells)
             pulled = self.refresh([ds.id], progress=_StepsOnly(progress))
             if pulled["failed"]:
                 progress.warn("Tersimpan di Sheet, tetapi salinan lokal belum diperbarui. Klik 'Tarik dari Sheet' nanti.")

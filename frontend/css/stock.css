@@ -1,0 +1,126 @@
+/*
+ * Stock page (stock.html). The prototype's names for colours are mapped onto
+ * the terminal theme's tokens, so the page follows dark/light mode and uses
+ * the same meaning for green (good), red (bad/tail risk), amber (caution).
+ */
+:root {
+  --fg: var(--color-fg);
+  --muted: var(--color-fg-muted);
+  --line: var(--color-border-line);
+  --bg: var(--color-bg);
+  --panel: var(--color-panel);
+  --chip: var(--t-panel-2);
+  --accent: var(--t-blue);
+  --accent-soft: color-mix(in srgb, var(--t-blue) 12%, transparent);
+  --accent-mid: color-mix(in srgb, var(--t-blue) 32%, transparent);
+  --tail: var(--t-dn);
+  --ok: var(--t-up);
+  --warn: var(--color-warn);
+  --sans: var(--font-anthropic-sans);
+  --serif: var(--font-anthropic-serif);
+  --peer-2: #a78bfa;
+  --peer-3: #2dd4bf;
+}
+:root[data-theme="light"] { --peer-2: #7c3aed; --peer-3: #0f766e; }
+
+.lab { max-width: 1180px; margin: 0 auto; padding: 18px 20px 60px; box-sizing: border-box; }
+.lab .hidden, .hidden { display: none !important; }
+.lab h2 { font-size: 17px; margin: 0 0 4px; font-weight: 650; letter-spacing: -.01em; }
+.lab h3 { font-size: 14.5px; margin: 0 0 6px; font-weight: 650; letter-spacing: -.01em; }
+.lab .lab-h4 { font-size: 13.5px; margin: 18px 0 2px; }
+.lab p { margin: 0 0 10px; }
+.lab .muted { color: var(--muted); }
+.lab .small { font-size: 12.5px; }
+.lab a { color: var(--accent); }
+
+/* header block */
+.lab-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+.lab-kicker { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.lab-title { font: 600 28px/1.15 var(--serif); letter-spacing: -.02em; margin: 2px 0 0; }
+.lab-last { font: 500 13px var(--t-mono); background: var(--chip); border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px; white-space: nowrap; }
+.lab-last b { font-weight: 650; }
+.lab-lede { color: var(--muted); max-width: 80ch; font-size: 14px; line-height: 1.55; margin: 4px 0 14px; }
+.lab-tk { display: flex; gap: 4px; align-items: center; }
+.lab-tk .lab-tk-l { font-size: 11px; color: var(--muted); margin-right: 2px; }
+.lab-tk .adm-btn[aria-pressed="true"] { background: var(--t-amber); border-color: var(--t-amber); color: #000; font-weight: 700; }
+
+/* tabs: a segmented control */
+.tabs { display: inline-flex; gap: 2px; flex-wrap: wrap; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 3px; margin-bottom: 14px; }
+.tab { appearance: none; border: 0; background: transparent; color: var(--muted); font: inherit; font-weight: 600; font-size: 13.5px; padding: 7px 14px; border-radius: 7px; cursor: pointer; }
+.tab[aria-selected="true"] { background: var(--chip); color: var(--fg); box-shadow: 0 1px 2px rgba(0, 0, 0, .25); }
+.tab:focus-visible, .lab button:focus-visible, .lab select:focus-visible, .lab input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.winbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; padding: 8px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+.lab select, .lab input[type=number] { font: inherit; font-size: 13px; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }
+.lab label { font-size: 13px; color: var(--muted); }
+.banner { padding: 10px 12px; border-radius: 10px; border: 1px dashed var(--warn); font-size: 13.5px; margin-bottom: 14px; }
+
+/* sections are panels */
+.lab section > .sec, .lab .sec { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; margin-bottom: 12px; }
+.verdict { font: 600 21px/1.3 var(--serif); letter-spacing: -.015em; margin: 0 0 6px; max-width: 60ch; }
+
+/* stat cards */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 8px; margin: 12px 0 4px; }
+.stat { padding: 10px 12px; background: var(--chip); border: 1px solid var(--line); border-radius: 10px; position: relative; overflow: hidden; min-width: 0; }
+.stat::before { content: ''; position: absolute; inset: 0 auto 0 0; width: 3px; background: transparent; }
+.stat .cl { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.stat .cv { font: 500 22px/1.2 var(--t-mono); letter-spacing: -.02em; margin-top: 3px; font-variant-numeric: tabular-nums; }
+.stat .cn { font-size: 12px; color: var(--muted); margin-top: 3px; line-height: 1.4; }
+.stat.warn::before { background: var(--warn); } .stat.warn .cv { color: var(--warn); }
+.stat.bad::before { background: var(--tail); } .stat.bad .cv { color: var(--tail); }
+.stat.ok::before { background: var(--ok); } .stat.ok .cv { color: var(--ok); }
+
+.cap { font-size: 13px; color: var(--muted); margin: 2px 0 8px; max-width: 78ch; line-height: 1.5; }
+svg.ch { display: block; max-width: 100%; height: auto; overflow: visible; }
+svg.ch .grid { stroke: var(--line); stroke-width: 1; }
+svg.ch .tl { fill: var(--muted); font-size: 11px; font-family: var(--sans); }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 6px; }
+.legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 5px; vertical-align: -2px; }
+.chartbox { margin-top: 20px; }
+
+/* tables: dense, aligned */
+.lab table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.lab th, .lab td { padding: 7px 9px; text-align: right; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+.lab th:first-child, .lab td:first-child { text-align: left; }
+.lab th { font-weight: 600; color: var(--muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; }
+.lab td { font-family: var(--t-mono); font-size: 12.5px; }
+.lab td:first-child, .lab td[style*="text-align:left"] { font-family: var(--sans); font-size: 13px; }
+.lab td.ok { color: var(--ok); } .lab td.warn { color: var(--warn); } .lab td.bad { color: var(--tail); }
+.lab td .ok { color: var(--ok); } .lab td .bad { color: var(--tail); }
+.lab tr.sel td { background: var(--accent-soft); }
+.tablewrap { overflow-x: auto; }
+.lab input.dvin { width: 78px; font-size: 13px; padding: 4px 6px; }
+#dvTable td, #dvTable th { white-space: nowrap; }
+table.sens td, table.sens th { text-align: center; padding: 7px 6px; line-height: 1.25; }
+table.sens td small { display: block; color: var(--muted); font-size: 11px; }
+table.sens td.base { outline: 2px solid var(--accent); outline-offset: -2px; font-weight: 650; }
+table.sens th:first-child { text-align: left; }
+
+/* explanations */
+.explain { margin-top: 12px; padding: 11px 14px; border-radius: 10px; background: var(--chip); font-size: 13.5px; line-height: 1.6; }
+.explain p { margin: 0 0 6px; max-width: 82ch; }
+.explain p:last-child { margin-bottom: 0; }
+body.noexplain .explain { display: none; }
+.readsteps { padding-left: 22px; margin: 10px 0 0; }
+.readsteps li { margin-bottom: 9px; max-width: 82ch; font-size: 13.5px; line-height: 1.55; }
+.srcline { font-size: 12px; color: var(--muted); margin: 8px 0 0; max-width: 90ch; line-height: 1.5; }
+.disc { font-size: 12px; color: var(--muted); margin-top: 24px; max-width: 80ch; }
+details.more summary { cursor: pointer; font-weight: 600; font-size: 13.5px; }
+
+/* buttons and inputs */
+.row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.btn { appearance: none; font: inherit; font-weight: 600; font-size: 13.5px; padding: 8px 14px; border-radius: 9px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); cursor: pointer; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.assump { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px 16px; margin: 12px 0; }
+.assump .f { display: flex; flex-direction: column; gap: 3px; }
+.assump .f label { font-size: 12.5px; color: var(--fg); font-weight: 550; }
+.assump .f small { font-size: 11.5px; color: var(--muted); line-height: 1.35; }
+.assump input[type=number] { width: 100%; box-sizing: border-box; font-family: var(--t-mono); }
+
+@media (max-width: 640px) {
+  .lab { padding: 12px 12px 48px; }
+  .lab section > .sec, .lab .sec { padding: 12px 12px; }
+  .lab-title { font-size: 23px; }
+  .tabs { display: flex; }
+  .tab { flex: 1 1 auto; padding: 7px 8px; }
+}

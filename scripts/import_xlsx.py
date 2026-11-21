@@ -1,9 +1,12 @@
 """Fill the local cache from an .xlsx export of the Sheet (no Google sign-in needed).
 
     python scripts/import_xlsx.py path/to/Indonesia-Economic-Outlook-Data.xlsx
+    python scripts/import_xlsx.py "BMRI prices (live).xlsx" --spreadsheet bmri
 
 In Google Sheets: File > Download > Microsoft Excel (.xlsx). Useful before you
 have set up Google access, or to work offline from a saved copy.
+--spreadsheet picks which spreadsheet the file is (a name from the
+"spreadsheets:" list in config/datasets.yaml); default: the main one.
 
 The Sheets API returns cells as the text you see ("16,520.03", "31 Oct 2025"),
 while .xlsx holds raw numbers and dates, so this script re-applies the common
@@ -30,6 +33,8 @@ def as_text(cell) -> str:
     if isinstance(v, bool):
         return "TRUE" if v else "FALSE"
     if isinstance(v, (datetime, date)):
+        if "h:mm" in fmt.lower():  # Google Finance timestamps: 11/20/2026 16:00:00
+            return f"{v.month}/{v.day}/{v.year} {v.hour}:{v.minute:02d}:{v.second:02d}"
         if fmt.lower().startswith("yyyy-mm-dd"):
             return v.strftime("%Y-%m-%d")
         if "mmm" in fmt.lower():
@@ -59,12 +64,13 @@ def read_block(ws, first_row, last_row, first_col, last_col) -> list[list[str]]:
     return rows
 
 
-def main(path: str) -> None:
+def main(path: str, spreadsheet: str = "main") -> None:
     cfg = load_config()
+    sid = cfg.spreadsheets.get(spreadsheet, spreadsheet if len(spreadsheet) > 20 else cfg.spreadsheet_id)
     cache = Cache()
     wb = openpyxl.load_workbook(path, data_only=True)
     for ds in cfg.datasets.values():
-        if ds.kind != "sheet":
+        if ds.kind != "sheet" or ds.spreadsheet != sid:
             continue
         rng = ds.range
         if rng.tab not in wb.sheetnames:
@@ -82,6 +88,12 @@ def main(path: str) -> None:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
+    args = sys.argv[1:]
+    sheet = "main"
+    if "--spreadsheet" in args:
+        i = args.index("--spreadsheet")
+        sheet = args[i + 1]
+        del args[i:i + 2]
+    if len(args) != 1:
         sys.exit(__doc__)
-    main(sys.argv[1])
+    main(args[0], sheet)

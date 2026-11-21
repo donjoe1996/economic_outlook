@@ -231,6 +231,64 @@ Things to keep in mind when reading it:
 - CSI 300 has no Okt'25 close in Google Finance, so it's measured from
   Nov'25 and marked with "*".
 
+## Single-stock pages (BMRI first)
+
+The macro dashboard asks "is the environment good for Indonesian equities?".
+`stock.html?tk=BMRI` asks the next question for one stock: **at this price,
+with these fundamentals, flows and dividends, what am I actually buying?**
+It is reached from the rail (SAHAM → BMRI), the BMRI tile in the monitor, the
+link in the "Pasar saham" panel, or by typing `bmri` in the command bar. Its
+own strip of macro tiles links back to the matching dashboard section.
+
+Four tabs, in the order an analysis should run:
+
+| Tab | Question it answers | Main inputs |
+| --- | --- | --- |
+| 1. Profil | How does this stock really move? Fat tails, drawdowns, volatility clusters | daily prices |
+| 2. Valuasi | Cheap or dear against its own history, its peers, and three valuation models? | fundamentals, history, peer sheet, CPI |
+| 3. Arus asing | Is foreign selling exhausting? Six tests, each green/amber/red | flow tab, prices |
+| 4. Dividen | Will the dividend continue, and grow? Six tests plus editable scenarios | dividend tab, EPS history |
+
+The three valuation models (justified P/B, dividend discount, residual income
+with ROE fading to a target) are deliberately simple. They exist to show which
+assumption the price is sensitive to, so the sensitivity grid and "implied by
+the price" cards matter more than the single average.
+
+**Where the data lives.** Every number comes from Google Sheet tabs, read
+like the macro datasets (`group: stock` in `config/datasets.yaml`):
+
+| Dataset | Spreadsheet → tab | Holds |
+| --- | --- | --- |
+| `bmri_price` | BMRI → `Untitled` | daily close (GOOGLEFINANCE) |
+| `bmri_fund` | BMRI → `Fundamental` | key / description / value / unit / note (ROE, NIM, CAR, shares…) |
+| `bmri_fh` | BMRI → `Riwayat fundamental` | year-end BVPS, EPS, DPS |
+| `bmri_dv` | BMRI → `Dividen` | every payment: date, fiscal year, interim/final, per share |
+| `bmri_flow` | BMRI → `Arus asing` | foreign net flow rows (stock/market, day/week/YTD) and events |
+| `bank_peers_price` | bank peers → `Untitled` | BBCA, BBRI, BMRI, BBNI closes in that column order |
+| `bank_peers_fund` | bank peers → `Fundamental` | one row per bank |
+| `cpi` | main → `IHK` | BPS consumer price index, for "in today's rupiah" |
+
+New tabs were added *after* the existing first tab in each stock spreadsheet,
+so anything that exports only the first tab keeps working. Add a dividend,
+a flow figure or a new fundamental row in the Sheet (or through **+ Data**),
+then press **⟳ Tarik** on the stock page.
+
+**Adding another stock** (say BBRI): copy `frontend/js/stock/BMRI.js` to
+`BBRI.js` and edit its names, dataset ids, valuation defaults, dividend
+scenarios and narrative; add its five datasets (and its spreadsheet alias)
+to `config/datasets.yaml`; add the `<script>` tag to `stock.html`; add it to
+`STOCKS` in `terminal.js`. The engine (`js/stock/engine.js`) is shared; the
+peer group comes from `SECT` in the engine (only `bank` so far).
+
+Notes on this port from the prototype:
+
+- The Monte Carlo simulation is not included yet.
+- The prototype read the payout input and a stats panel from the same id
+  (`vPay`), so the dividend-discount model silently used a 72% payout. The
+  page now uses the payout you type (default: FY2025 payout from the
+  `Fundamental` tab), so its DDM value is higher than the prototype's.
+- A market event sourced only from Wikipedia was left out of the flow tab.
+
 ## Insights written by Claude (project skill)
 
 `.claude/skills/economic-insights/` is a project-level Claude Code skill.
