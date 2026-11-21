@@ -7,26 +7,40 @@
 <link rel="stylesheet" href="css/theme.css">
 <link rel="stylesheet" href="css/dashboard.css">
 <link rel="stylesheet" href="css/admin.css">
+<link rel="stylesheet" href="css/terminal.css">
+<script>try{document.documentElement.dataset.theme=localStorage.getItem("eo-theme")||"dark"}catch(e){document.documentElement.dataset.theme="dark"}</script>
 </head>
 <body>
 
-<!-- ======================= Toolbar (js/admin.js) ======================= -->
-<header class="adm-top">
-<div class="adm-bar" role="toolbar" aria-label="Data">
+<!-- ======================= Terminal shell (js/terminal.js, js/admin.js) ======================= -->
+<header class="adm-top t-top">
+<div class="adm-bar t-bar" role="toolbar" aria-label="Data">
+  <a class="t-brand" href="#" title="Indonesia Economic Outlook"><span class="t-logo">IEO</span><span class="t-brand-name">Indonesia Economic Outlook</span></a>
+  <label class="t-cmd" title="Ketik kode fungsi atau nama indikator, lalu Enter (pintasan: / atau ⌘K)">
+    <span class="t-cmd-go" aria-hidden="true">›</span>
+    <input id="t-cmd" type="search" placeholder="Fungsi: MAP, WRLD, BI, MKT…" list="t-cmd-list" autocomplete="off" spellcheck="false" aria-label="Lompat ke fungsi">
+    <kbd>/</kbd>
+    <datalist id="t-cmd-list"></datalist>
+  </label>
   <span class="adm-pill warn" id="adm-google">Google: …</span>
-  <span class="adm-grow" id="adm-status">Memuat data…</span>
-  <button class="adm-btn primary" id="adm-login" hidden>Hubungkan Google</button>
-  <button class="adm-btn" id="adm-refresh" title="Baca ulang semua dataset dari Google Sheet ke salinan lokal">Tarik dari Sheet</button>
-  <button class="adm-btn" id="adm-add" title="Tambah periode baru atau isi sel kosong, langsung ke Google Sheet">Tambah / perbarui data</button>
-  <button class="adm-btn" id="adm-auto" title="Cek sumber resmi (FRED) untuk periode baru">Cek data baru otomatis</button>
-  <button class="adm-btn" id="adm-sources">Sumber data</button>
-  <button class="adm-btn" id="adm-activity" title="Apa yang sedang/telah dikerjakan aplikasi">Aktivitas</button>
-  <a class="adm-btn" href="metadata.html" title="Dataset mana yang terbaru dan mana yang perlu diperbarui">Metadata</a>
-  <a class="adm-btn" id="adm-sheet" href="#" target="_blank" rel="noopener">Buka Sheet ↗</a>
+  <span class="adm-grow t-status" id="adm-status">Memuat data…</span>
+  <div class="t-actions">
+    <button class="adm-btn primary" id="adm-login" hidden>Hubungkan Google</button>
+    <button class="adm-btn" id="adm-refresh" title="Baca ulang semua dataset dari Google Sheet ke salinan lokal">⟳ Tarik</button>
+    <button class="adm-btn" id="adm-add" title="Tambah periode baru atau isi sel kosong, langsung ke Google Sheet">＋ Data</button>
+    <button class="adm-btn" id="adm-auto" title="Cek sumber resmi (FRED) untuk periode baru">Cek baru</button>
+    <button class="adm-btn" id="adm-sources" title="Dari mana setiap angka berasal">Sumber</button>
+    <button class="adm-btn" id="adm-activity" title="Apa yang sedang/telah dikerjakan aplikasi">Aktivitas</button>
+    <a class="adm-btn" href="metadata.html" title="Dataset mana yang terbaru dan mana yang perlu diperbarui">Metadata</a>
+    <a class="adm-btn" id="adm-sheet" href="#" target="_blank" rel="noopener" title="Buka Google Sheet">Sheet ↗</a>
+    <button class="adm-btn t-theme" id="t-theme" type="button" title="Tema gelap/terang" aria-label="Ganti tema">◐</button>
+  </div>
 </div>
-
 <!-- the progress panel is inserted here by js/jobs-ui.js -->
 </header>
+
+<!-- Market monitor: latest value, change and 12-month line per key series (js/terminal.js) -->
+<section class="t-monitor" id="t-monitor" aria-label="Monitor indikator utama"></section>
 
 <dialog class="adm-dlg" id="adm-act-dlg">
   <h2>Aktivitas</h2>
@@ -70,7 +84,11 @@
 <div class="adm-toast" id="adm-toast" role="status" aria-live="polite"></div>
 
 <!-- ======================= Dashboard (from the prototype) ======================= -->
+<div class="t-shell">
+<nav class="t-nav" id="t-nav" aria-label="Fungsi"></nav>
 <div id="dash-root">
+<!-- Decision signals: the verdicts each section computes, side by side (js/terminal.js) -->
+<section class="t-signals" id="t-signals" aria-label="Sinyal keputusan"></section>
 <div class="eo">
 <header class="eo-head">
 <h1 class="eo-title">Indonesia Economic Outlook</h1>
@@ -635,6 +653,7 @@
 </div>
 </div>
 
+</div><!-- /t-shell -->
 <!-- Order matters: d3 and dash first, then data (loaders), then drawings. -->
 <script src="vendor/d3.min.js"></script>
 <script src="vendor/topojson-client.min.js"></script>
@@ -649,5 +668,6 @@
 <script src="js/sections/04-money-valuation.js"></script>
 <script src="js/sections/05-sectors.js"></script>
 <script src="js/sections/06-claude-insights.js"></script>
+<script src="js/terminal.js"></script>
 </body>
 </html>

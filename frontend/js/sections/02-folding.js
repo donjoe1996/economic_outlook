@@ -4,7 +4,7 @@ const set = (open) => { h.setAttribute('aria-expanded', open ? 'true' : 'false')
 h.setAttribute('role', 'button'); h.tabIndex = 0; h.classList.add('eo-fold-h');
 h.addEventListener('click', () => set(h.getAttribute('aria-expanded') !== 'true'));
 h.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); set(h.getAttribute('aria-expanded') !== 'true'); } });
-set(false);
+set(true);  // open by default: a decision dashboard should not hide its content
 }
 document.querySelectorAll('section.eo-panel').forEach((sec) => { const h = sec.querySelector(':scope > h2.eo-panel-title'); if (!h) return; sec.classList.add('eo-fold'); wire(h, [sec]); });
 [['section.eo-kpis:not(.eo-derived)', 'Indikator ekonomi utama', '5 · Indikator'], ['section.eo-kpis.eo-derived', 'Indikator turunan', '7 · Turunan'], ['section.eo-note', 'Ringkasan narasi', ''], ['section.eo-charts', 'Grafik detail indikator', '6 · Grafik']].forEach((d) => {
