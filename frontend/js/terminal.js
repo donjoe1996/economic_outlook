@@ -58,6 +58,11 @@
     MINE: 'tambang batu bara coal nikel nickel cpo komoditas adro ptba antm inco', RATE: 'sbn yield obligasi valuasi per pbv srbi ksei',
     MAP: 'peta map asia global perdagangan ekspor', AI: 'insight claude ringkasan ai', 'Q&A': 'pertanyaan syarat beli',
   };
+  // Single-stock pages (stock.html?tk=CODE). Add a code here when a new
+  // js/stock/<CODE>.js exists, so the rail, command bar and monitor link to it.
+  const STOCKS = [['BMRI', 'Bank Mandiri']];
+  const stockUrl = (code) => 'stock.html?tk=' + code;
+
   function go(find) {
     const t = typeof find === 'string' ? $('#' + find) : find();
     if (!t) return;
@@ -77,6 +82,13 @@
       a.addEventListener('click', (e) => { e.preventDefault(); go(find); });
       nav.append(a);
       navLinks.push([a, find]);
+    });
+    nav.append(el('div', 't-nav-h t-nav-h2', 'Saham'));
+    STOCKS.forEach(([code, label]) => {
+      const a = el('a', 't-nav-a');
+      a.href = stockUrl(code); a.title = 'Halaman saham ' + code + ': profil, valuasi, arus asing, dividen';
+      a.append(el('span', 't-code', code), el('span', 't-nav-l', label + ' ↗'));
+      nav.append(a);
     });
     nav.append(el('div', 't-nav-foot', '/ atau ⌘K untuk lompat'));
   }
@@ -98,11 +110,13 @@
   // command bar
   const cmd = $('#t-cmd');
   if (cmd) {
-    $('#t-cmd-list').replaceChildren(...SECTIONS.map(([c, l]) => { const o = el('option'); o.value = c; o.label = l; return o; }));
+    $('#t-cmd-list').replaceChildren(...SECTIONS.concat(STOCKS.map(([c, l]) => [c, 'Saham ' + l])).map(([c, l]) => { const o = el('option'); o.value = c; o.label = l; return o; }));
     cmd.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') { cmd.value = ''; cmd.blur(); return; }
       if (e.key !== 'Enter') return;
       const q = cmd.value.trim().toLowerCase();
+      const stock = STOCKS.find(([c]) => c.toLowerCase() === q);
+      if (stock) { location.href = stockUrl(stock[0]); return; }
       const hit = SECTIONS.find(([c]) => c.toLowerCase() === q)
         || SECTIONS.find(([c, l]) => c.toLowerCase().startsWith(q) || l.toLowerCase().includes(q))
         || SECTIONS.find(([c]) => (KEYWORDS[c] || '').split(' ').some((w) => w.startsWith(q) || q.split(' ').includes(w)));
@@ -119,6 +133,7 @@
   const MON = [
     { code: 'IHSG', name: 'IHSG', ds: 'saham', f: 'ihsg', d: 0, chg: 'pct', good: 1, go: 'eo-market' },
     { code: 'FIN', name: 'IDX Finance', ds: 'saham', f: 'fin', d: 0, chg: 'pct', good: 1, go: 'eo-market' },
+    { code: 'BMRI', name: 'Bank Mandiri', ds: 'saham', f: 'bmri', d: 0, chg: 'pct', good: 1, href: stockUrl('BMRI') },
     { code: 'SPX', name: 'S&P 500', ds: 'sahamglobal', f: 'spx', d: 0, chg: 'pct', good: 1, go: 'eo-map' },
     { code: 'IDR', name: 'USD/IDR', ds: 'rupiah', f: 'usd_idr', d: 0, chg: 'pct', good: -1, go: 'eo-regime' },
     { code: 'BI', name: 'BI Rate', ds: 'birate', f: 'bi_rate', d: 2, unit: '%', chg: 'bp', good: -1, go: 'eo-checklist' },
@@ -179,12 +194,12 @@
       const arrow = m.chg === 'flow' ? '' : raw > 0 ? '▲ ' : raw < 0 ? '▼ ' : '■ ';
       const t = el('button', 't-tile t-' + tone);
       t.type = 'button';
-      t.title = `${m.name}: ${last[m.per || 'month']} · klik untuk ke bagiannya. Warna: hijau = baik untuk saham Indonesia, merah = buruk.`;
+      t.title = `${m.name}: ${last[m.per || 'month']} · ${m.href ? 'klik untuk membuka halaman sahamnya' : 'klik untuk ke bagiannya'}. Warna: hijau = baik untuk saham Indonesia, merah = buruk.`;
       const per = String(last[m.per || 'month']).replace(' (turunan)', '').replace(/ 20(\d\d)$/, " '$1");
       const head = el('div', 't-tile-h'); head.append(el('span', 't-code', m.code), el('span', 't-tile-n', m.name), el('span', 't-per', per));
       const val = el('div', 't-tile-v', (m.chg === 'flow' ? sgn(v, m.d) : nf(v, m.d)) + (m.unit || ''));
       t.append(head, val, spark(rows.slice(-12).map((r) => r[m.f]), m.chg === 'flow' ? 'flow' : 'line', tone), el('div', 't-chg', arrow + chg));
-      t.addEventListener('click', () => go(m.go));
+      t.addEventListener('click', () => { if (m.href) location.href = m.href; else go(m.go); });
       tiles.push(t);
     });
     if (tiles.length) box.replaceChildren(...tiles);
@@ -227,6 +242,20 @@
     $('.t-sig-grid', box).append(...cards);
   }
 
+  // Deep links from the stock page (index.html#eo-market): scroll there once the
+  // panels have been drawn, since their height is unknown before that.
+  let hashDone = false;
+  function jumpToHash() {
+    if (hashDone || !location.hash) return;
+    const id = decodeURIComponent(location.hash.slice(1));
+    const code = SECTIONS.find(([c]) => c.toLowerCase() === id.toLowerCase());
+    const find = code ? code[2] : () => document.getElementById(id);
+    if (!find()) return;
+    hashDone = true;
+    setTimeout(() => go(find), 50);
+  }
+  window.addEventListener('hashchange', () => { hashDone = false; jumpToHash(); });
   function render() { try { monitor(); signals(); spy(); } catch (e) { console.warn('terminal', e && e.message); } }
+  window.addEventListener('eo:data', jumpToHash);
   dash.onData(render);
 })();

@@ -187,3 +187,58 @@ def test_job_runner_success_error_and_single_flight():
         time.sleep(0.05)
     assert a.view()["result"] == 42 and a.view()["steps"][-1]["text"] == "Selesai"
     assert bad.state == "error" and bad.error == "salah isi"
+
+
+class TwoBookSheet(FakeSheet):
+    """Two spreadsheets: records which spreadsheet each read and write went to."""
+
+    def __init__(self):
+        super().__init__()
+        self.calls = []
+
+    def batch_get(self, spreadsheet_id, ranges):
+        self.calls.append((spreadsheet_id, tuple(ranges)))
+        return super().batch_get(spreadsheet_id, ranges)
+
+    def write_cells(self, spreadsheet_id, cells):
+        self.calls.append((spreadsheet_id, "write"))
+        return super().write_cells(spreadsheet_id, cells)
+
+
+@pytest.fixture
+def two_books(tmp_path):
+    sheet = TwoBookSheet()
+    sheet.set_rows("PMI", 1, [["Periode", "PMI"], ["Sep'26", "52.4"]])
+    sheet.set_rows("Dividen", 1, [["Tanggal", "FY", "Jenis", "DPS"], ["2026-05-11", "2025", "final", "376.96"]])
+    cfg = AppConfig(spreadsheet_id="main", datasets={
+        "pmi": Dataset("pmi", "PMI", range=SheetRange.parse("PMI!A2:B"), write="append", spreadsheet="main"),
+        "dv": Dataset("dv", "Dividen", range=SheetRange.parse("Dividen!A2:D"), write="append",
+                      key=(0, 2), value_col=3, spreadsheet="stockbook", group="stock"),
+    })
+    svc = Service(cfg, Cache(tmp_path), sheet)
+    svc.refresh()
+    return svc, sheet
+
+
+def test_refresh_reads_each_spreadsheet_separately(two_books):
+    svc, sheet = two_books
+    reads = [c for c in sheet.calls if c[1] != "write"]
+    assert any(c[0] == "main" and "PMI" in c[1][0] for c in reads)
+    assert any(c[0] == "stockbook" and "Dividen" in c[1][0] for c in reads)
+    assert not any(c[0] == "main" and "Dividen" in r for c in reads for r in c[1])
+
+
+def test_snapshot_filters_by_group_and_extra_ids(two_books):
+    svc, _ = two_books
+    assert set(svc.snapshot()) == {"pmi", "dv"}
+    assert set(svc.snapshot("stock")) == {"dv"}
+    assert set(svc.snapshot("stock", ["pmi"])) == {"dv", "pmi"}
+    assert set(svc.snapshot("macro")) == {"pmi"}
+    assert "stockbook" in svc.snapshot("stock")["dv"]["sheet_url"]
+
+
+def test_upsert_writes_to_the_datasets_own_spreadsheet(two_books):
+    svc, sheet = two_books
+    sheet.calls.clear()
+    svc.upsert("dv", ["2026-10-02", "2026", "interim", "66"])
+    assert ("stockbook", "write") in sheet.calls and ("main", "write") not in sheet.calls

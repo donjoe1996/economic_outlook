@@ -1,7 +1,7 @@
 """Web layer: a thin FastAPI app over Service, plus the static page.
 
 Fast reads answer directly:
-    GET  /api/data                 every dataset, from the local cache
+    GET  /api/data?group=macro     datasets for one page, from the local cache
     GET  /api/datasets             datasets + columns (for the form)
     GET  /api/auth/status          is Google connected? (no network)
     GET  /api/metadata             per dataset: newest period, what is due, blanks, last pull
@@ -59,9 +59,12 @@ class ApplyBody(BaseModel):
 
 # ------------------------------------------------------------------ reads
 @app.get("/api/data")
-def get_data():
+def get_data(group: str | None = None, ids: str | None = None):
+    """group=macro (dashboard) or group=stock (stock pages), plus ids=a,b,c
+    for single extra datasets; omit both for everything."""
     svc = service()
-    return {"sheet_url": svc.cfg.sheet_url, "google": google.status(), "datasets": svc.snapshot()}
+    extra = [i for i in (ids or "").split(",") if i]
+    return {"sheet_url": svc.cfg.sheet_url, "google": google.status(), "datasets": svc.snapshot(group, extra)}
 
 
 @app.get("/api/datasets")

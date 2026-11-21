@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Saham BMRI</title>
+<link rel="stylesheet" href="css/theme.css">
+<link rel="stylesheet" href="css/admin.css">
+<link rel="stylesheet" href="css/terminal.css">
+<link rel="stylesheet" href="css/stock.css">
+<script>try{document.documentElement.dataset.theme=localStorage.getItem("eo-theme")||"dark"}catch(e){document.documentElement.dataset.theme="dark"}</script>
+<script>
+  // Which stock (stock.html?tk=BMRI) and which data this page needs: its own
+  // datasets (group "stock") plus the macro series for the context strip.
+  window.EO_TK = (new URLSearchParams(location.search).get('tk') || 'BMRI').toUpperCase();
+  window.EO_DATA_QUERY = 'group=stock&ids=birate,fed,rupiah,flow,saham,sbn,inflation';
+</script>
+</head>
+<body>
+
+<header class="adm-top t-top">
+<div class="adm-bar t-bar" role="toolbar" aria-label="Saham">
+  <a class="t-brand" href="index.html" title="Kembali ke dashboard makro"><span class="t-logo">IEO</span><span class="t-brand-name">Saham</span></a>
+  <div class="lab-tk" id="tkSwitch" role="group" aria-label="Pilih saham"></div>
+  <span class="adm-grow t-status" id="labStatus">Memuat data…</span>
+  <div class="t-actions">
+    <a class="adm-btn" href="index.html" title="Dashboard ekonomi makro">← Makro</a>
+    <button class="adm-btn" id="labRefresh" title="Baca ulang data saham ini dari Google Sheet">⟳ Tarik</button>
+    <a class="adm-btn" href="metadata.html" title="Dataset mana yang terbaru dan mana yang perlu diperbarui">Metadata</a>
+    <a class="adm-btn" id="labSheet" href="#" target="_blank" rel="noopener" title="Buka sheet saham ini">Sheet ↗</a>
+    <button class="adm-btn t-theme" id="t-theme" type="button" aria-label="Ganti tema">☀</button>
+  </div>
+</div>
+<!-- the progress panel is inserted here by js/jobs-ui.js -->
+</header>
+
+<!-- Macro context for this stock: what in the economy moves it (js/stock/engine.js) -->
+<section class="t-monitor" id="labMacro" aria-label="Konteks makro"></section>
+
+<main class="lab">
+  <div class="lab-head">
+    <div>
+      <div class="lab-kicker"><span class="t-code" id="labCode">BMRI</span> <span id="labSector">Bank</span> · <span id="labFull"></span></div>
+      <h1 class="lab-title" id="labTitle">Bank Mandiri</h1>
+    </div>
+    <div class="lab-last" id="lastChip"></div>
+  </div>
+  <p class="lab-lede" id="labLede">Pertama, lihat bagaimana saham ini benar-benar bergerak. Lalu nilai harganya terhadap laba, nilai buku dan dividennya, periksa apakah asing masih menjual, dan uji apakah dividennya akan bertahan.</p>
+
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" id="tab-char" aria-selected="true" data-tab="char">1. Profil</button>
+    <button class="tab" role="tab" id="tab-val" aria-selected="false" data-tab="val">2. Valuasi</button>
+    <button class="tab" role="tab" id="tab-flow" aria-selected="false" data-tab="flow">3. Arus asing</button>
+    <button class="tab" role="tab" id="tab-div" aria-selected="false" data-tab="div">4. Dividen</button>
+  </div>
+
+  <div class="winbar hidden" id="winbar">
+    <label for="win">Sejarah yang dipakai</label>
+    <select id="win">
+      <option value="0">Semua data</option>
+      <option value="8">8 tahun terakhir</option>
+      <option value="4">4 tahun terakhir</option>
+      <option value="2">2 tahun terakhir</option>
+      <option value="1">1 tahun terakhir</option>
+    </select>
+    <label><input type="checkbox" id="showExplain" checked> Catatan penjelasan</label>
+  </div>
+  <p class="small muted hidden" id="winNote" style="margin:0 0 14px">Jendela pendek mencerminkan suasana pasar terkini; jendela panjang memuat lebih banyak krisis dan masa tenang. Ganti jendela dan lihat semua angka ikut bergerak.</p>
+
+  <div class="banner hidden" id="noData"></div>
+
+  <!-- 1. PROFIL -->
+  <section id="p-char">
+    <div class="sec">
+      <p class="verdict" id="verdict"></p>
+      <p class="muted" id="verdictSub"></p>
+      <div class="stats" id="cards"></div>
+      <div class="explain"><p><b>Cara membaca angka.</b> Merah menandai risiko, kuning menandai hal yang perlu hati-hati. Kalau hanya sempat melihat empat, lihat gerak harian biasa, hari ekstrem, skor ekor tebal, dan rasio tiga bulan terakhir.</p></div>
+    </div>
+
+    <div class="sec">
+      <h3>Bagaimana sebaran gerak harian?</h3>
+      <p class="cap">Batang biru adalah hari sebenarnya. Garis tipis adalah kurva lonceng sempurna dengan rata-rata dan sebaran yang sama. Batang merah adalah hari yang melampaui tiga simpangan baku, yang menurut kurva lonceng hampir tidak pernah terjadi.</p>
+      <label><input type="checkbox" id="histLog"> Perbesar hari-hari langka (skala log)</label>
+      <div id="chHist"></div>
+      <div class="legend"><span><i style="background:var(--accent-mid)"></i>Hari biasa</span><span><i style="background:var(--tail)"></i>Hari ekstrem</span><span><i style="background:var(--fg);height:2px;vertical-align:3px"></i>Prediksi kurva lonceng</span></div>
+      <div class="explain" id="exHist"></div>
+    </div>
+
+    <div class="sec">
+      <h3>Harga</h3>
+      <p class="cap" id="priceCap">Skala log, jadi jarak yang sama berarti persentase gerak yang sama.</p>
+      <label><input type="checkbox" id="priceReal"> Sesuaikan dengan inflasi (semua harga dalam rupiah hari ini)</label>
+      <div id="chPrice"></div>
+      <div class="chartbox">
+        <h3>Volatilitas datang berkelompok</h3>
+        <p class="cap">Volatilitas tahunan dari 30 hari bursa bergulir. Kalau volatilitas konstan, garis ini datar. Garis putus-putus adalah rata-rata jendela.</p>
+        <div id="chVol"></div>
+        <div class="explain" id="exVol"></div>
+      </div>
+      <div class="chartbox">
+        <h3>Penurunan dari puncak sebelumnya</h3>
+        <p class="cap">Seberapa jauh harga di bawah penutupan tertingginya setiap hari. Inilah wujud "masa buruk" yang sebenarnya, dan berapa lama berlangsung.</p>
+        <div id="chDD"></div>
+        <div class="explain" id="exDD"></div>
+      </div>
+    </div>
+
+    <div class="sec">
+      <h3>Tahun demi tahun</h3>
+      <p class="cap">Saham yang sama, karakter yang sangat berbeda tiap tahun. Satu rata-rata menyembunyikan banyak hal.</p>
+      <div class="tablewrap"><table id="yearTable"></table></div>
+    </div>
+    <div class="row"><button class="btn primary" id="toVal">Lanjut: valuasi</button></div>
+  </section>
+
+  <!-- 2. VALUASI -->
+  <section id="p-val" class="hidden">
+    <div class="sec">
+      <p class="verdict" id="vVerdict"></p>
+      <p class="muted" id="vSub" style="max-width:74ch"></p>
+      <p class="srcline" id="vSrc"></p>
+    </div>
+
+    <div class="sec">
+      <h3>Yang Anda bayar hari ini</h3>
+      <div class="stats" id="vPayStats"></div>
+      <div class="explain" id="exPay"></div>
+    </div>
+
+    <div class="sec" id="vHist">
+      <div class="row" style="justify-content:space-between">
+        <h3 style="margin:0">Apakah itu murah dibanding sejarahnya sendiri?</h3>
+        <div class="row"><label for="hWin">Bandingkan dengan</label>
+          <select id="hWin"><option value="0" selected>Semua sejak 2017</option><option value="5">5 tahun terakhir</option><option value="3">3 tahun terakhir</option></select></div>
+      </div>
+      <p class="cap" style="margin-top:6px">Harga penutupan tiap hari dibagi nilai buku (atau laba) per saham saat itu. Pita berarsir memuat separuh tengah dan 80% tengah dari semua hari, jadi terlihat apa yang "normal" untuk bank ini.</p>
+      <div class="banner hidden" id="hMsg"></div>
+      <div id="hBody">
+        <div class="stats" id="hStats"></div>
+        <h3 class="lab-h4">Harga terhadap nilai buku (PBV)</h3>
+        <div id="chPBV"></div>
+        <h3 class="lab-h4">Harga terhadap laba (PER, 12 bulan terakhir)</h3>
+        <div id="chPER"></div>
+        <h3 class="lab-h4">Imbal laba setelah inflasi</h3>
+        <p class="cap" style="margin:0 0 4px">Laba per saham dibagi harga, dikurangi inflasi harga konsumen setahun sebelumnya. Berbeda dengan dua kelipatan di atas, ukuran inilah yang sudah dikoreksi untuk perubahan harga. Makin tinggi, makin besar imbalan atas risiko.</p>
+        <div id="chREY"></div>
+        <div class="legend"><span><i style="background:var(--fg);height:2px;vertical-align:4px"></i>Kelipatan harian</span><span><i style="background:var(--accent);opacity:.3"></i>50% hari di tengah</span><span><i style="background:var(--accent);opacity:.14"></i>80% di tengah</span><span><i style="background:var(--muted);height:2px;vertical-align:4px"></i>Median</span><span><i style="background:var(--tail);border-radius:50%"></i>Hari ini</span></div>
+        <div class="explain" id="exHist2"></div>
+        <h3 class="lab-h4" style="margin-top:22px">Tahun demi tahun</h3>
+        <div class="tablewrap"><table id="hTable"></table></div>
+        <p class="srcline" id="hSrc"></p>
+      </div>
+    </div>
+
+    <div class="sec" id="vPeers">
+      <h3 id="pTitle">Dibanding bank besar lain</h3>
+      <p class="cap" id="pIntro" style="max-width:74ch"></p>
+      <div class="banner hidden" id="pMsg"></div>
+      <div class="stats" id="pStats"></div>
+      <div class="tablewrap"><table id="pTable"></table></div>
+      <div class="explain" id="exPeers"></div>
+
+      <div class="row" style="justify-content:space-between;margin-top:26px">
+        <h3 class="lab-h4" style="margin:0">Pergerakan harga keempat saham</h3>
+        <div class="row"><label for="pWin">Sejak</label>
+          <select id="pWin"><option value="ytd" selected>31 Des 2025</option><option value="1">1 tahun lalu</option><option value="2">2 tahun lalu</option><option value="5">5 tahun lalu</option></select></div>
+      </div>
+      <p class="cap" style="margin-top:4px">Setiap harga diset 100 di awal, jadi garis di 60 berarti saham sudah turun 40% sejak itu.</p>
+      <div id="chPeers"></div>
+      <div class="legend" id="pLegend"></div>
+      <div class="explain" id="exMove"></div>
+
+      <div id="pShockBox">
+        <h3 class="lab-h4" style="margin-top:22px" id="pShockTitle">Hari paling tajam belakangan ini</h3>
+        <div class="tablewrap"><table id="pShock"></table></div>
+      </div>
+      <p class="srcline" id="pSrc"></p>
+    </div>
+
+    <div class="sec">
+      <h3>Yang Anda dapat dengan harga itu</h3>
+      <div class="stats" id="vGet"></div>
+      <div class="explain" id="exGet"></div>
+    </div>
+
+    <div class="sec">
+      <h3>Seberapa kokoh mesinnya</h3>
+      <div class="stats" id="vSafe"></div>
+      <div class="explain" id="exSafe"></div>
+    </div>
+
+    <div class="sec">
+      <h2>Asumsi Anda</h2>
+      <p class="muted" style="max-width:72ch">Semua di bawah dihitung ulang saat Anda mengetik. Ini penilaian, bukan fakta. Ubah dan lihat seberapa jauh jawabannya bergerak.</p>
+      <div class="assump">
+        <div class="f"><label for="vCoe">Biaya ekuitas %</label><input type="number" id="vCoe" value="12.5" step="0.5" min="1" max="30"><small>Imbal hasil yang Anda minta untuk memegang saham bank.</small></div>
+        <div class="f"><label for="vG">Pertumbuhan jangka panjang %</label><input type="number" id="vG" value="5.5" step="0.5" min="0" max="15"><small>Seberapa cepat laba dan dividen bisa tumbuh selamanya.</small></div>
+        <div class="f"><label for="vEg">Pertumbuhan laba tahun depan %</label><input type="number" id="vEg" value="3" step="0.5" min="-20" max="40"><small>Diterapkan ke laba per saham 12 bulan terakhir.</small></div>
+        <div class="f"><label for="vPay">Rasio pembayaran dividen %</label><input type="number" id="vPay" value="79" step="1" min="0" max="100"><small>Bagian laba yang dibagikan sebagai dividen.</small></div>
+        <div class="f"><label for="vRoe">Return on equity %</label><input type="number" id="vRoe" value="22.1" step="0.5" min="0" max="50"><small>Laba per rupiah nilai buku saat ini.</small></div>
+        <div class="f"><label for="vRoeT">ROE 10 tahun lagi %</label><input type="number" id="vRoeT" value="17" step="0.5" min="0" max="50"><small>Ke mana persaingan menariknya, untuk model ROE memudar.</small></div>
+        <div class="f"><label for="vInf">Inflasi % per tahun</label><input type="number" id="vInf" value="3.28" step="0.1" min="-2" max="20"><small>Mulai dari angka resmi terakhir. Dipakai untuk nilai riil.</small></div>
+      </div>
+      <p class="small muted" id="vRealLine" style="max-width:76ch"></p>
+    </div>
+
+    <div class="sec">
+      <h3>Berapa nilai wajarnya</h3>
+      <p class="cap">Tiga cara standar menilai bank. Setiap batang membentang dari kasus hati-hati ke kasus optimis; tanda tegak adalah asumsi dasar Anda. Garis putus-putus adalah harga hari ini. Pertumbuhan dan biaya ekuitas sama-sama nominal, jadi sudah memuat inflasi dan semua nilai dalam rupiah hari ini.</p>
+      <div id="chFF"></div>
+      <div class="legend"><span><i style="background:var(--accent);opacity:.55"></i>Rentang pesimis ke optimis</span><span><i style="background:var(--fg);height:12px;width:3px;border-radius:0;vertical-align:-2px"></i>Kasus dasar Anda</span><span><i style="background:var(--muted);opacity:.5"></i>Rentang harga pasar 52 minggu</span><span>Garis putus-putus: harga hari ini</span></div>
+      <div class="tablewrap" style="margin-top:12px"><table id="vTable"></table></div>
+      <p class="small muted" style="margin-top:8px;max-width:74ch">Pesimis: biaya ekuitas +1 poin, pertumbuhan −1, ROE −2, pertumbuhan laba tahun depan −3. Optimis: kebalikannya.</p>
+      <div class="explain" id="exFF"></div>
+    </div>
+
+    <div class="sec">
+      <h3>Apa yang sudah diasumsikan harga hari ini</h3>
+      <p class="cap">Jalankan model ke belakang. Bukan "berapa nilainya", tetapi "apa yang harus dipercaya agar harga ini wajar".</p>
+      <div class="stats" id="vImp"></div>
+      <div class="explain" id="exImp"></div>
+    </div>
+
+    <div class="sec">
+      <h3>Seberapa bergantung jawabannya pada dua tebakan</h3>
+      <p class="cap">Rata-rata ketiga metode, untuk berbagai biaya ekuitas (ke bawah) dan pertumbuhan jangka panjang (ke samping). Sel hijau lebih dari 15% di atas harga, merah lebih dari 15% di bawah.</p>
+      <div class="tablewrap"><table class="sens" id="vSens"></table></div>
+      <div class="explain" id="exSens"></div>
+    </div>
+
+    <div class="sec">
+      <details class="more"><summary>Cara kerja ketiga metode</summary>
+        <p class="small" style="max-width:74ch"><b>PBV yang dibenarkan.</b> Bank yang menghasilkan lebih dari biaya modalnya layak diperdagangkan di atas nilai buku. PBV wajar = (ROE − pertumbuhan) ÷ (biaya ekuitas − pertumbuhan). Metode tercepat, dan sepenuhnya bergantung pada ROE bertahan di levelnya.</p>
+        <p class="small" style="max-width:74ch"><b>Diskonto dividen.</b> Nilai saham adalah dividen yang akan dibayarnya, didiskon dengan imbal hasil yang Anda minta. Harga wajar = dividen tahun depan ÷ (biaya ekuitas − pertumbuhan). <span id="ddmNote"></span></p>
+        <p class="small" style="max-width:74ch"><b>Residual income dengan ROE memudar.</b> Mulai dari nilai buku, lalu tambahkan nilai kini dari laba di atas imbal hasil yang Anda minta, tahun demi tahun selama 10 tahun. ROE bergeser dari level hari ini ke level 10 tahun Anda, dan nilai buku tumbuh dengan laba ditahan. Metode paling hati-hati karena mengakui bahwa imbal hasil tinggi mengundang persaingan.</p>
+        <p class="small muted" style="max-width:74ch">Setiap metode gagal bila biaya ekuitas tidak di atas pertumbuhan. Halaman lalu menampilkan "n/a" alih-alih angka tak bermakna.</p>
+      </details>
+    </div>
+    <p class="small muted" style="margin-top:14px;max-width:74ch">Data fundamental dibaca dari sheet saham ini (tab Fundamental). Cocokkan dengan laporan keuangan perusahaan sebelum diandalkan. Valuasi memberi tahu berapa nilai sebuah saham, bukan kapan pasar akan setuju.</p>
+  </section>
+
+  <!-- 3. ARUS ASING -->
+  <section id="p-flow" class="hidden">
+    <div class="sec">
+      <p class="verdict" id="fVerdict"></p>
+      <p class="muted" id="fSub" style="max-width:76ch"></p>
+      <div class="stats" id="fStats"></div>
+    </div>
+
+    <div class="sec">
+      <h3>Apakah aksi jual memuncak? Enam uji</h3>
+      <p class="cap" style="max-width:74ch">Hijau berarti tanda penjualan mulai habis, merah berarti tekanan masih membesar, kuning berarti belum jelas. Tidak ada satu uji pun yang memutuskan, dan puncak baru pasti jelas belakangan, jadi baca polanya.</p>
+      <div class="tablewrap"><table id="fScore"></table></div>
+      <div class="explain" id="exScore"></div>
+    </div>
+
+    <div class="sec">
+      <h3>Hari demi hari</h3>
+      <p class="cap" style="max-width:74ch">Batang menunjukkan beli bersih asing (hijau, naik) atau jual bersih (merah, turun) tiap hari. Garis adalah harga saham pada skala kanan. Batang pucat adalah angka turunan dari pengurangan total yang dilaporkan, dan garis pendek berarti tidak ada angka hari itu.</p>
+      <div id="chFD"></div>
+      <div class="legend"><span><i style="background:var(--tail)"></i>Jual bersih asing</span><span><i style="background:var(--ok)"></i>Beli bersih asing</span><span><i style="background:var(--tail);opacity:.4"></i>Angka turunan</span><span><i style="background:var(--fg);height:2px;vertical-align:4px"></i>Harga</span><span>Garis putus-putus: pengumuman MSCI</span></div>
+      <div class="explain" id="exFD"></div>
+    </div>
+
+    <div class="sec">
+      <h3>Total penjualan sejak pengumuman</h3>
+      <p class="cap" style="max-width:74ch">Jumlah berjalan arus asing bersih harian. Saat garis berhenti turun dan mendatar, penjualan sudah berhenti. Kemiringan curam berarti penjualan berat.</p>
+      <div id="chFC"></div>
+      <div class="explain" id="exFC"></div>
+    </div>
+
+    <div class="sec">
+      <h3>Pekan demi pekan</h3>
+      <p class="cap" style="max-width:74ch">Angka mingguan mundur lebih jauh, jadi terlihat apakah ketenangan adalah tren atau jeda. Bandingkan dengan seluruh pasar di tabel.</p>
+      <div id="chFW"></div>
+      <div class="tablewrap" style="margin-top:12px"><table id="fMkt"></table></div>
+      <div class="explain" id="exFW"></div>
+    </div>
+
+    <div class="sec">
+      <h3>Yang akan mengonfirmasi puncak</h3>
+      <ul class="readsteps" id="fConfirm" style="padding-left:20px"></ul>
+      <h3 style="margin-top:22px">Yang akan datang</h3>
+      <ul class="readsteps" id="fEvents" style="padding-left:20px"></ul>
+    </div>
+
+    <div class="sec">
+      <details class="more"><summary>Data di balik halaman ini</summary>
+        <div class="tablewrap" style="margin-top:10px"><table id="fData"></table></div>
+        <p class="srcline" id="fSrc"></p>
+      </details>
+    </div>
+    <p class="small muted" style="max-width:76ch">Arus dihimpun dari laporan media atas data BEI, Stockbit dan Bloomberg Technoz. Sumber mendefinisikan "pasar" secara berbeda (pasar reguler, atau semua pasar termasuk negosiasi), jadi anggap angka mingguan dan harian sebagai indikasi dan bandingkan yang sejenis. Arus asing hanya satu masukan: ia tidak menunjukkan siapa pembelinya, dan pekan yang tenang bisa saja diikuti penjualan lagi. Edukasi, bukan saran investasi.</p>
+  </section>
+
+  <!-- 4. DIVIDEN -->
+  <section id="p-div" class="hidden">
+    <div class="sec">
+      <p class="verdict" id="dVerdict"></p>
+      <p class="muted" id="dSub" style="max-width:76ch"></p>
+      <div class="stats" id="dStats"></div>
+    </div>
+
+    <div class="sec">
+      <h3>Apakah dividen akan terus datang? Enam uji</h3>
+      <p class="cap" style="max-width:74ch">Hijau berarti bukti mendukung dividen yang stabil atau naik. Kuning adalah batas atau risiko yang perlu diawasi. Merah adalah tanda peringatan. Tidak ada satu uji pun yang memutuskan, jadi baca polanya.</p>
+      <div class="tablewrap"><table id="dScore"></table></div>
+      <div class="explain" id="exDScore"></div>
+    </div>
+
+    <div class="sec">
+      <h3>Sepuluh tahun dividen</h3>
+      <p class="cap" id="dvBarCap" style="max-width:74ch"></p>
+      <div id="chDV"></div>
+      <div class="legend"><span><i style="background:var(--accent);opacity:.45"></i><span id="lgI">Interim</span></span><span><i style="background:var(--accent)"></i><span id="lgF">Final</span></span><span><i style="border:1px dashed var(--accent);background:transparent"></i>Tahun berjalan sejauh ini</span></div>
+      <label class="small" style="display:block;margin:10px 0 0"><input type="checkbox" id="dvReal"> Tampilkan dalam rupiah hari ini (disesuaikan inflasi)</label>
+      <div class="explain" id="exDV"></div>
+      <div class="tablewrap" style="margin-top:14px"><table id="dvTable"></table></div>
+    </div>
+
+    <div class="sec">
+      <h3>Imbal hasil dividen</h3>
+      <p class="cap" style="max-width:74ch">Dividen tahunan dibagi harga saham di akhir tahun itu. Titik terakhir memakai dividen yang dibayar 12 bulan terakhir dan harga hari ini.</p>
+      <div id="chDY"></div>
+      <div class="explain" id="exDY"></div>
+    </div>
+
+    <div class="sec">
+      <h3>Berapa bagian laba yang dibagikan</h3>
+      <p class="cap" style="max-width:74ch">Dividen per saham dibagi laba per saham. Garis mendekati 100% berarti bank membagikan seluruh labanya.</p>
+      <div id="chDP"></div>
+      <div class="explain" id="exDP"></div>
+    </div>
+
+    <div class="sec">
+      <h3>Yang bisa diharapkan tahun ini</h3>
+      <p class="cap" id="dvScenCap" style="max-width:74ch"></p>
+      <div class="tablewrap"><table id="dvScen"></table></div>
+      <p class="small muted" id="dvNeed" style="max-width:74ch;margin-top:8px"></p>
+      <div class="explain" id="exScen"></div>
+      <h3 style="margin-top:22px">Yang perlu diawasi</h3>
+      <ul class="readsteps" id="dWatch" style="padding-left:20px"></ul>
+    </div>
+
+    <div class="sec">
+      <details class="more"><summary>Setiap pembayaran, dan dari mana datanya</summary>
+        <div class="tablewrap" style="margin-top:10px"><table id="dvPays"></table></div>
+        <p class="srcline" id="dvSrc"></p>
+      </details>
+    </div>
+    <p class="small muted" style="max-width:76ch">Rekam jejak panjang adalah bukti, bukan janji. Dividen berasal dari laba masa depan, dan setiap pembagian diputuskan RUPS. Skenario adalah aritmetika sederhana atas angka yang Anda masukkan, bukan ramalan.</p>
+  </section>
+
+  <p class="disc">Alat edukasi, bukan saran investasi. Hasil menggambarkan apa yang tersirat dari sejarah yang dipilih, bukan apa yang akan terjadi.</p>
+</main>
+
+<div class="adm-toast" id="adm-toast" role="status" aria-live="polite"></div>
+
+<script src="js/dash-shim.js"></script>
+<script src="js/jobs-ui.js"></script>
+<script src="js/data/loaders.js"></script>
+<script src="js/stock/BMRI.js"></script>
+<script src="js/stock/engine.js"></script>
+<script src="js/terminal.js"></script>
+</body>
+</html>

@@ -93,7 +93,9 @@
     const t0 = performance.now();
     phase('Membaca salinan lokal dari server…');
     try {
-      const r = await fetch('/api/data', { cache: 'no-store' });
+      // Each page asks only for what it draws (set before this script loads).
+      const query = window.EO_DATA_QUERY || 'group=macro';
+      const r = await fetch('/api/data?' + query, { cache: 'no-store' });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const j = await r.json();
       sources = j.datasets; loadError = null;
