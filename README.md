@@ -236,7 +236,8 @@ Things to keep in mind when reading it:
 The macro dashboard asks "is the environment good for Indonesian equities?".
 `stock.html?tk=BMRI` asks the next question for one stock: **at this price,
 with these fundamentals, flows and dividends, what am I actually buying?**
-It is reached from the rail (SAHAM → BMRI), the BMRI tile in the monitor, the
+It is reached from the **Saham individu** cards at the top of the rail (each shows
+the latest close), the BMRI tile in the monitor, the
 link in the "Pasar saham" panel, or by typing `bmri` in the command bar. Its
 own strip of macro tiles links back to the matching dashboard section.
 

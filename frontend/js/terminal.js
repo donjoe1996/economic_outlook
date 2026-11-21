@@ -60,7 +60,9 @@
   };
   // Single-stock pages (stock.html?tk=CODE). Add a code here when a new
   // js/stock/<CODE>.js exists, so the rail, command bar and monitor link to it.
-  const STOCKS = [['BMRI', 'Bank Mandiri']];
+  // [code, name, sector, column of the monthly 'saham' dataset (for the rail price)]
+  const STOCKS = [['BMRI', 'Bank Mandiri', 'Bank', 'bmri']];
+  const onStockPage = !!window.EO_TK;
   const stockUrl = (code) => 'stock.html?tk=' + code;
 
   function go(find) {
@@ -70,11 +72,66 @@
     window.scrollTo({ top, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
   }
 
-  // rail
+  // rail. Stocks come first and look different from the section links: they are
+  // separate pages to zoom into, not places on this page.
   const nav = $('#t-nav');
   const navLinks = [];
-  if (nav) {
-    nav.append(el('div', 't-nav-h', 'Fungsi'));
+  const stockCards = [];
+  function stockGroup() {
+    nav.append(el('div', 't-nav-h', 'Saham individu'));
+    STOCKS.forEach(([code, name, sector, col]) => {
+      const a = el('a', 't-stock' + (onStockPage && window.EO_TK === code ? ' on' : ''));
+      a.href = stockUrl(code);
+      a.title = code + ' ' + name + ': profil, valuasi, arus asing, dividen';
+      const top = el('span', 't-stock-top');
+      top.append(el('span', 't-code', code), el('span', 't-stock-n', name));
+      const pxl = el('span', 't-stock-px', sector);
+      a.append(top, pxl);
+      nav.append(a);
+      stockCards.push([a, pxl, col, sector]);
+    });
+  }
+  // Latest close on each card: the stock page's own daily price when we are on it,
+  // otherwise the month-end close the dashboard already has.
+  function stockPrices() {
+    stockCards.forEach(([a, pxl, col, sector]) => {
+      let v, p, per;
+      const code = a.querySelector('.t-code').textContent;
+      if (onStockPage && window.EO_TK === code && window.EOLab && window.EOLab.last) {
+        ({ v, p, per } = window.EOLab.last());
+      } else {
+        const d = dash.data('saham');
+        if (d.status !== 'ok' || !Array.isArray(d.data)) return;
+        const rows = d.data.filter((r) => r[col] != null && !isNaN(r[col]));
+        if (rows.length < 2) return;
+        v = rows[rows.length - 1][col]; p = rows[rows.length - 2][col]; per = rows[rows.length - 1].month;
+      }
+      if (!isFinite(v)) return;
+      const chg = p ? (v / p - 1) * 100 : 0;
+      pxl.replaceChildren(el('span', null, 'Rp ' + nf(v, 0)), el('span', 't-stock-chg ' + (chg > 0 ? 't-up' : chg < 0 ? 't-dn' : ''), sgn(chg, 1) + '%'), el('span', 't-stock-per', String(per).replace(/ 20(\d\d)$/, " '$1")));
+      a.title = code + ': ' + sector + ' · penutupan ' + per + ' · klik untuk profil, valuasi, arus asing, dividen';
+    });
+  }
+  if (nav && onStockPage) {
+    // stock page: other stocks, this stock's analyses (its tabs), and the way back
+    stockGroup();
+    nav.append(el('div', 't-nav-h t-nav-h2', 'Analisis ' + window.EO_TK));
+    [['PROF', 'Profil gerak harga', 'char'], ['VAL', 'Valuasi', 'val'], ['FLOW', 'Arus asing', 'flow'], ['DIV', 'Dividen', 'div']].forEach(([code, label, tab]) => {
+      const a = el('a', 't-nav-a'); a.href = '#' + tab; a.dataset.tab = tab;
+      a.append(el('span', 't-code', code), el('span', 't-nav-l', label));
+      nav.append(a);
+    });
+    const mark = (tab) => nav.querySelectorAll('.t-nav-a[data-tab]').forEach((a) => a.classList.toggle('on', a.dataset.tab === tab));
+    window.addEventListener('eo:tab', (e) => mark(e.detail));
+    nav.append(el('div', 't-nav-h t-nav-h2', 'Makro'));
+    [['MAKRO', 'Dashboard makro', ''], ['MKT', 'Pasar saham', 'eo-market'], ['RATE', 'Uang & valuasi', 'eo-uang'], ['BI', 'Syarat BI turunkan bunga', 'eo-checklist']].forEach(([code, label, id]) => {
+      const a = el('a', 't-nav-a'); a.href = 'index.html' + (id ? '#' + id : '');
+      a.append(el('span', 't-code', code), el('span', 't-nav-l', label));
+      nav.append(a);
+    });
+  } else if (nav) {
+    stockGroup();
+    nav.append(el('div', 't-nav-h t-nav-h2', 'Fungsi'));
     SECTIONS.forEach(([code, label, find]) => {
       const a = el('a', 't-nav-a');
       a.href = '#';
@@ -83,14 +140,7 @@
       nav.append(a);
       navLinks.push([a, find]);
     });
-    nav.append(el('div', 't-nav-h t-nav-h2', 'Saham'));
-    STOCKS.forEach(([code, label]) => {
-      const a = el('a', 't-nav-a');
-      a.href = stockUrl(code); a.title = 'Halaman saham ' + code + ': profil, valuasi, arus asing, dividen';
-      a.append(el('span', 't-code', code), el('span', 't-nav-l', label + ' ↗'));
-      nav.append(a);
-    });
-    nav.append(el('div', 't-nav-foot', '/ atau ⌘K untuk lompat'));
+    nav.append(el('div', 't-nav-foot', '/ atau ⌘K untuk lompat · ketik kode saham, misalnya bmri'));
   }
 
   // scroll-spy: highlight the section nearest the top
@@ -255,7 +305,7 @@
     setTimeout(() => go(find), 50);
   }
   window.addEventListener('hashchange', () => { hashDone = false; jumpToHash(); });
-  function render() { try { monitor(); signals(); spy(); } catch (e) { console.warn('terminal', e && e.message); } }
+  function render() { try { stockPrices(); monitor(); signals(); spy(); } catch (e) { console.warn('terminal', e && e.message); } }
   window.addEventListener('eo:data', jumpToHash);
   dash.onData(render);
 })();

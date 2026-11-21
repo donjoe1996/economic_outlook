@@ -276,3 +276,21 @@ dialog.adm-dlg::backdrop { background: rgba(0, 0, 0, .5); -webkit-backdrop-filte
 .t-stocklinks { font-size: 13px; color: var(--color-fg-muted); margin: 2px 0 12px; }
 .t-stocklinks a { color: var(--color-fg); text-decoration: none; border: 1px solid var(--color-border-line); border-radius: 999px; padding: 3px 10px 3px 6px; margin-left: 4px; white-space: nowrap; }
 .t-stocklinks a:hover { border-color: var(--t-amber); }
+
+/* stock cards at the top of the rail: separate pages, so they look like cards */
+.t-stock { display: block; margin: 0 0 6px; padding: 8px 10px; border: 1px solid var(--color-border-line); border-radius: 10px; background: var(--t-panel-2); color: var(--color-fg); text-decoration: none; }
+.t-stock:hover { border-color: var(--t-amber); }
+.t-stock.on { border-color: var(--t-amber); box-shadow: inset 3px 0 0 var(--t-amber); }
+.t-stock-top { display: flex; align-items: baseline; gap: 8px; }
+.t-stock-top .t-code { font-size: 12px; }
+.t-stock-n { font-size: 13px; font-weight: 600; }
+.t-stock-px { display: flex; gap: 8px; align-items: baseline; margin-top: 3px; font: 500 12px var(--t-mono); color: var(--color-fg-muted); font-variant-numeric: tabular-nums; }
+.t-stock-px > span { white-space: nowrap; }
+.t-stock-px > span:first-child { color: var(--color-fg); }
+.t-stock-chg.t-up { color: var(--t-up); } .t-stock-chg.t-dn { color: var(--t-dn); }
+.t-stock-per { margin-left: auto; font-size: 11px; }
+@media (max-width: 1000px) {
+  .t-stock { flex: none; margin: 0 6px 0 0; padding: 5px 9px; display: flex; align-items: center; }
+  .t-stock-n, .t-stock-per { display: none; }
+  .t-stock-px { margin: 0 0 0 8px; }
+}

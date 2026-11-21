@@ -1087,6 +1087,7 @@ function showTab(name, keepHash) {
   var hasData = S.prices.length > 0;
   $("#winbar").classList.toggle("hidden", !hasData || name !== "char");
   $("#winNote").classList.toggle("hidden", !hasData || name !== "char");
+  window.dispatchEvent(new CustomEvent("eo:tab", { detail: name }));
   if (!keepHash) try { history.replaceState(null, "", location.pathname + location.search + "#" + name); } catch (e) { }
   if (!hasData) return;
   if (name === "val") renderVal();
@@ -1156,7 +1157,9 @@ $("#labRefresh").addEventListener("click", function () {
     .then(function () { btn.disabled = false; return window.dash.reload(); });
 });
 
-window.EOLab = { pct: pct, spct: spct, fv: fv, dvPx: dvPx, px: px, stat: stat };
+window.EOLab = { pct: pct, spct: spct, fv: fv, dvPx: dvPx, px: px, stat: stat,
+  /* latest daily close, for the stock card in the rail (terminal.js) */
+  last: function () { var n = S.prices.length; return n > 1 ? { v: S.prices[n - 1], p: S.prices[n - 2], per: (function (d) { return d.getUTCDate() + " " + MONTHS[d.getUTCMonth()]; })(new Date(S.dates[n - 1])) } : { v: NaN }; } };
 fillChrome();
 if (window.dash) window.dash.onData(draw);
 })();
