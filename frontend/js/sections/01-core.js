@@ -105,9 +105,9 @@ title: 'Arus asing di saham terbaru',
 description: 'Bulan terakhir yang terisi di dataset flow (Rp triliun; positif = asing beli bersih).'
 });
 dash.calc('confidence', {
-inputs: ['pmi', 'gdp', 'retail', 'ikk', 'inflation', 'birate', 'rupiah', 'flow', 'rotation', 'srbi', 'fed', 'gpmi', 'ism', 'gdpus', 'trade', 'cpmi', 'komoditas', 'saham', 'kredit', 'tambang', 'sahamasia'],
-fn: (pmi, gdp, retail, ikk, inflation, birate, rupiah, flow, rotation, srbi, fed, gpmi, ism, gdpus, trade, cpmi, komoditas, saham, kredit, tambang, sahamasia) => {
-const sets = { pmi, gdp, retail, ikk, inflation, birate, rupiah, flow, rotation, srbi, fed, gpmi, ism, gdpus, trade, cpmi, komoditas, saham, kredit, tambang, sahamasia };
+inputs: ['pmi', 'gdp', 'retail', 'ikk', 'inflation', 'birate', 'rupiah', 'flow', 'rotation', 'srbi', 'fed', 'gpmi', 'ism', 'gdpus', 'trade', 'cpmi', 'komoditas', 'saham', 'kredit', 'tambang', 'sahamasia', 'sahamglobal'],
+fn: (pmi, gdp, retail, ikk, inflation, birate, rupiah, flow, rotation, srbi, fed, gpmi, ism, gdpus, trade, cpmi, komoditas, saham, kredit, tambang, sahamasia, sahamglobal) => {
+const sets = { pmi, gdp, retail, ikk, inflation, birate, rupiah, flow, rotation, srbi, fed, gpmi, ism, gdpus, trade, cpmi, komoditas, saham, kredit, tambang, sahamasia, sahamglobal };
 return Object.keys(sets).map((id) => {
 const rows = sets[id] || [];
 const c = { Tinggi: 0, Sedang: 0, Rendah: 0, kosong: 0 };
@@ -1053,6 +1053,7 @@ const EO_CH = [
 { id: 'fx', from: 'us', to: 'id', label: 'Kurs USD/IDR', curv: 0.30, conf: ['rupiah'] },
 { id: 'flow', from: 'global', to: 'id', label: 'Arus modal asing', curv: 0.28, conf: ['flow'] },
 { id: 'asia', label: 'IHSG vs Asia', conf: ['sahamasia'] },
+{ id: 'global', label: 'IHSG vs Global', conf: ['sahamglobal'] },
 ];
 let eoSel = 'trade', eoM = null;
 const eoFmt = (v, d) => (v === null || v === undefined || isNaN(v)) ? '–' : Number(v).toLocaleString('id-ID', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -1079,15 +1080,42 @@ const EO_ASIA = [
 { k: 'ews', n: 'Singapura (ETF EWS, USD)', s: 'SG', c: [104.2, 1.0], usd: 1, dx: 9, dy: -2, a: 'start' },
 { k: 'eem', n: 'Pasar berkembang (ETF EEM, USD)', usd: 1 },
 ];
+// Big markets around the world (tab "Saham Global"). Indices in local currency;
+// URTH and EIDO are USD ETFs. CSI 300 has no Okt'25 close in Google Finance,
+// so its change is measured from its first available month (shown as "sejak ...").
+const EO_GLOBAL = [
+{ k: 'ihsg', lab: 1, ct: 'id', n: 'Indonesia (IHSG)', s: 'IHSG', c: [113, -2], id: 1, dy: 22 },
+{ k: 'eido', n: 'Indonesia (EIDO, USD)', usd: 1, id: 1 },
+{ k: 'spx', lab: 1, ct: 'us', n: 'AS (S&P 500)', s: 'New York', c: [-98, 39], dy: -12 },
+{ k: 'ftse', lab: 1, ct: 'gb', n: 'Inggris (FTSE 100)', s: 'London', c: [-2.5, 53.5], dx: -8, dy: 2, a: 'end' },
+{ k: 'dax', lab: 1, ct: 'de', n: 'Jerman (DAX)', s: 'Frankfurt', c: [10.4, 51.2], dx: 8, dy: -8, a: 'start' },
+{ k: 'cac', lab: 1, ct: 'fr', n: 'Prancis (CAC 40)', s: 'Paris', c: [2.4, 46.6], dx: -6, dy: 16, a: 'end' },
+{ k: 'nikkei', lab: 1, ct: 'jp', n: 'Jepang (Nikkei 225)', s: 'Tokyo', c: [138.5, 36.5], dx: 9, dy: 4, a: 'start' },
+{ k: 'hsi', lab: 1, n: 'Hong Kong (Hang Seng)', s: 'HK', c: [114.2, 22.3], dx: 8, dy: 14, a: 'start' },
+{ k: 'csi', lab: 1, ct: 'cn', n: 'China (CSI 300)', s: 'China', c: [103, 34], dy: 0 },
+{ k: 'urth', n: 'Dunia (ETF URTH, USD)', usd: 1 },
+];
+// The two "IHSG vs ..." views share one machine; each is just a setting.
+const EO_MKT = {
+asia: { ent: EO_ASIA, ds: 'sahamasia', box: [66, 154, 46, -12], bench: 'eem', benchN: 'EEM (USD)', peers: [['kospi', 'KOSPI Korea'], ['nifty', 'Nifty India']], offmap: [['spx', 'S&P 500'], ['asx', 'ASX 200']], label: 'Asia',
+  expl: 'Perubahan harga penutupan akhir bulan dari awal sampai akhir periode. Indeks Asia memakai mata uang lokal; ETF (berkode USD) memakai dolar sehingga ikut mencerminkan pelemahan mata uangnya. Jika semua pasar Asia turun bersama, penyebabnya regional; jika hanya Indonesia, penyebabnya lebih domestik. Ini perbandingan deskriptif, bukan bukti sebab-akibat.',
+  info: 'Indeks Asia memakai mata uang lokal, ETF memakai dolar. Asia Tenggara hanya lewat ETF karena indeksnya tidak tersedia. Dengan 12 bulan data, korelasi hanya petunjuk. Warna China di peta mewakili indeks Shenzhen; Hong Kong (Hang Seng) dan Singapura adalah titik kecil karena batasnya terlalu kecil untuk peta ini.' },
+global: { ent: EO_GLOBAL, ds: 'sahamglobal', box: null, bench: 'urth', benchN: 'Dunia URTH (USD)', peers: [['spx', 'S&P 500'], ['ftse', 'FTSE 100']], offmap: [], label: 'Global',
+  expl: 'IHSG dibandingkan dengan pasar saham terbesar dunia: New York, London, Frankfurt, Paris, Tokyo, Hong Kong, dan China daratan. Jika pasar besar naik tetapi IHSG turun, tekanannya lebih dari dalam negeri (atau dari arus keluar dana asing), bukan dari sentimen global. Perbandingan deskriptif, bukan sebab-akibat.',
+  info: 'Indeks memakai mata uang lokal masing-masing, jadi tidak memperhitungkan kurs; URTH (MSCI World) dan EIDO (Indonesia) dalam USD. DAX adalah indeks total return (dividen ikut dihitung), indeks lain hanya harga, jadi DAX sedikit diuntungkan dalam perbandingan. CSI 300 berisi 300 saham terbesar Shanghai dan Shenzhen; datanya baru ada sejak Nov\'25 di Google Finance. Hong Kong adalah titik karena wilayahnya terlalu kecil untuk peta dunia.' },
+};
+const eoIsMkt = (id) => !!EO_MKT[id];
+const eoMktSel = { asia: 'ihsg', global: 'ihsg' };
 function eoAsiaCol(p) { return p < 0 ? 'var(--eo-c-out)' : 'var(--eo-c-in)'; }
-function eoAsiaModel(rows) {
+function eoAsiaModel(rows, view) {
+view = view || 'asia'; const V = EO_MKT[view];
 if (!rows || rows.length < 3) return null;
 const mo = rows.map((r) => r.month);
 const pick = (k) => rows.map((r) => r[k]);
-const ent = EO_ASIA.map((e) => { const v = eoNN(pick(e.k)); const a = pick(e.k); return Object.assign({}, e, { vals: a, p: v.length > 1 ? (eoLast(v) / v[0] - 1) * 100 : null, dd: v.length ? (eoLast(v) / d3.max(v) - 1) * 100 : null }); }).filter((e) => e.p !== null);
+const ent = V.ent.map((e) => { const a = pick(e.k), v = eoNN(a), f0 = a.findIndex((x) => x != null); return Object.assign({}, e, { vals: a, since: f0 > 0 ? mo[f0] : null, p: v.length > 1 ? (eoLast(v) / v[0] - 1) * 100 : null, dd: v.length ? (eoLast(v) / d3.max(v) - 1) * 100 : null }); }).filter((e) => e.p !== null);
 const ih = ent.find((e) => e.k === 'ihsg'), ei = ent.find((e) => e.k === 'eido');
 if (!ih) return null;
-const se = ent.find((e) => e.k === eoAsiaSel) || ih;
+const se = ent.find((e) => e.k === eoMktSel[view]) || ih;
 const others = ent.filter((e) => !e.id);
 const worse = others.filter((e) => e.p < ih.p).length;
 const idx = (a) => { const b = eoNN(a)[0]; return a.map((v) => v == null || !b ? null : Math.round(v / b * 1000) / 10); };
@@ -1096,8 +1124,8 @@ return {
 mo, ent, ih, ei, se, col: eoAsiaCol(se.p), value: se.n.split(' (')[0] + ' ' + eoSgn(se.p, 1) + '%',
 unit: mo[0] + ' → ' + eoLast(mo) + ' · ' + (se.usd ? 'ETF dalam USD' : 'indeks mata uang lokal') + ' · penutupan akhir bulan',
 sub: 'Peringkat ' + (ent.slice().sort((a, b) => b.p - a.p).findIndex((x) => x.k === se.k) + 1) + ' dari ' + ent.length + ' · dari puncak ' + eoSgn(se.dd, 1) + '%' + (se.k === 'ihsg' && ei ? ' · versi USD (EIDO) ' + eoSgn(ei.p, 1) + '%' : ''),
-series: (se.k === 'ihsg' ? [sr('ihsg', 'IHSG', 'var(--eo-c-out)'), sr('kospi', 'KOSPI Korea', 'var(--eo-c-in)'), sr('nifty', 'Nifty India', 'var(--eo-c-ikk)'), sr('eem', 'EEM (USD)', 'var(--color-fg)')] : [sr(se.k, se.n.split(' (')[0], 'var(--eo-c-ikk)'), sr('ihsg', 'IHSG', 'var(--eo-c-out)'), se.k === 'eem' ? null : sr('eem', 'EEM (USD)', 'var(--color-fg)')]).filter(Boolean), th: 100, dec: 0, rank: true, months: mo,
-expl: 'Perubahan harga penutupan akhir bulan dari awal sampai akhir periode. Indeks Asia memakai mata uang lokal; ETF (berkode USD) memakai dolar sehingga ikut mencerminkan pelemahan mata uangnya. Jika semua pasar Asia turun bersama, penyebabnya regional; jika hanya Indonesia, penyebabnya lebih domestik. Ini perbandingan deskriptif, bukan bukti sebab-akibat.',
+series: (se.k === 'ihsg' ? [sr('ihsg', 'IHSG', 'var(--eo-c-out)'), sr(V.peers[0][0], V.peers[0][1], 'var(--eo-c-in)'), sr(V.peers[1][0], V.peers[1][1], 'var(--eo-c-ikk)'), sr(V.bench, V.benchN, 'var(--color-fg)')] : [sr(se.k, se.n.split(' (')[0], 'var(--eo-c-ikk)'), sr('ihsg', 'IHSG', 'var(--eo-c-out)'), se.k === V.bench ? null : sr(V.bench, V.benchN, 'var(--color-fg)')]).filter(Boolean), th: 100, dec: 0, rank: true, months: mo, view, info: V.info,
+expl: V.expl,
 };
 }
 function eoBuild() {
@@ -1124,9 +1152,10 @@ const idx = (a) => { const b = eoNN(a)[0]; return a.map((v) => v == null || !b ?
 const pct = (a) => { const n = eoNN(a); return n.length > 1 ? (eoLast(n) / n[0] - 1) * 100 : NaN; };
 const top = trade.filter((r) => r.exp != null).sort((a, b) => b.exp - a.exp);
 const cnBelow = eoNN(s.cn).filter((v) => v < 50).length;
-const asiaM = eoAsiaModel(opt('sahamasia'));
+const asiaM = eoAsiaModel(opt('sahamasia'), 'asia'), globalM = eoAsiaModel(opt('sahamglobal'), 'global');
 s.M = {
 asia: asiaM || { value: '–', unit: 'Belum ada data Saham Asia', sub: '', col: 'var(--color-fg-muted)', series: [], expl: '' },
+global: globalM || { value: '–', unit: 'Belum ada data Saham Global (tab "Saham Global")', sub: '', col: 'var(--color-fg-muted)', series: [], expl: '' },
 trade: { value: top.length ? top[0].partner + ' · ' + eoFmt(top[0].exp, 1) : '–', unit: 'ekspor nonmigas terbesar, USD miliar, Jan–Agu 2026', sub: 'Tebal garis = nilai ekspor ke mitra. Garis abu-abu = ekspor belum ada di data.', col: 'var(--eo-c-in)', bars: true,
 expl: 'Jalur barang: ke mana Indonesia menjual produknya. Makin besar porsi ke satu mitra, makin besar ketergantungan pada kondisi ekonomi mitra itu. Batang tipis = impor dari mitra yang sama; selisihnya adalah surplus atau defisit dagang.' },
 china: { value: eoFmt(eoLast(s.cn), 1), unit: 'PMI manufaktur China (NBS), ' + lm, sub: 'di bawah 50 pada ' + cnBelow + ' dari ' + eoNN(s.cn).length + ' bulan · PMI Indonesia ' + eoFmt(eoLast(s.idp), 1), mag: mag(eoLast(s.cn), 47, 52), col: 'var(--eo-c-out)',
@@ -1163,13 +1192,13 @@ if (c.id === 'trade') {
 const mx = d3.max(eoM.trade, (r) => r.exp || 0) || 1;
 return eoM.trade.map((r, k) => { const key = /amerika/i.test(r.partner) ? 'us' : /china|tiongkok/i.test(r.partner) ? 'china' : r.partner; return { from: 'id', to: key, w: r.exp != null ? 1.2 + 6 * r.exp / mx : 1, col: r.exp != null ? 'var(--eo-c-in)' : 'var(--color-fg-muted)', curv: k % 2 ? 0.18 : -0.18, dashed: r.exp == null, tip: r.partner + ': ekspor ' + (r.exp != null ? eoFmt(r.exp, 2) : '–') + ' · impor ' + (r.imp != null ? eoFmt(r.imp, 2) : '–') + ' (USD miliar)' }; });
 }
-if (c.id === 'asia') return [];
+if (eoIsMkt(c.id)) return [];
 if (c.id === 'commodity') return EO_REG.map((g, k) => ({ from: 'global', toC: g.c, w: 2.5, col: g.col, curv: [0.12, -0.08, 0.2][k], tip: g.name }));
 return [{ from: c.from, to: c.to, w: 1.5 + 5 * Math.max(0.1, Math.min(1, m.mag || 0.1)), col: m.col, curv: c.curv, rev: m.rev, tip: m.value + ' · ' + m.unit }];
 }
 function eoDrawMap() {
 const box = document.getElementById('eo-map-box'); if (!box) return;
-const svg = d3.select('#eo-map-svg'); const asiaV = eoSel === 'asia', W = box.clientWidth || 600, H = asiaV ? Math.round(Math.max(240, W * 0.66)) : Math.round(Math.max(220, W * 0.5)); const L0 = asiaV ? 66 : -180, L1 = asiaV ? 154 : 180, T0 = asiaV ? 46 : 85, T1 = asiaV ? -12 : -60;
+const svg = d3.select('#eo-map-svg'); const MV = EO_MKT[eoSel], asiaV = !!(MV && MV.box), W = box.clientWidth || 600, H = asiaV ? Math.round(Math.max(240, W * 0.66)) : Math.round(Math.max(220, W * 0.5)); const L0 = asiaV ? MV.box[0] : -180, L1 = asiaV ? MV.box[1] : 180, T0 = asiaV ? MV.box[2] : 85, T1 = asiaV ? MV.box[3] : -60;
 svg.attr('viewBox', '0 0 ' + W + ' ' + H).attr('height', H).style('height', H + 'px').selectAll('*').remove();
 const pf = d3.geoNaturalEarth1 || d3.geoEqualEarth || d3.geoEquirectangular || d3.geoMercator;
 let proj, path;
@@ -1211,9 +1240,9 @@ gH.append('path').attr('class', 'eo-map-hit').attr('d', d).attr('tabindex', 0).a
 });
 const gR = gN.append('g').attr('id', 'eo-reg');
 EO_REG.forEach((g, k) => { const [x, y] = proj(g.c); const n = gR.append('g').attr('class', 'eo-map-node').attr('transform', 'translate(' + x + ',' + y + ')'); n.append('circle').attr('r', 4.5).attr('fill', g.col).attr('stroke', 'var(--color-panel)').attr('stroke-width', 1.5); n.append('text').attr('class', 'small').attr('x', 7).attr('y', [-6, 12, -6][k]).attr('text-anchor', k === 2 ? 'end' : 'start').attr('dx', k === 2 ? -14 : 0).text(g.name); });
-const gAs = gN.append('g').attr('id', 'eo-asia');
-if (eoM.M.asia && eoM.M.asia.ent) {
-const A = eoM.M.asia, showTip = (ev, e) => { const rr = box.getBoundingClientRect(); tip.innerHTML = '<b>' + e.n + '</b><br>' + eoSgn(e.p, 1) + '% sejak ' + A.mo[0] + (e.usd ? ' (USD)' : ' (mata uang lokal)') + '<br>dari puncak ' + eoSgn(e.dd, 1) + '% · klik untuk detail'; tip.style.left = Math.min(rr.width - 220, Math.max(4, ev.clientX - rr.left + 12)) + 'px'; tip.style.top = Math.max(4, ev.clientY - rr.top - 56) + 'px'; tip.style.opacity = 1; };
+const gAs = gN.append('g').attr('id', 'eo-mkt');
+if (MV && eoM.M[eoSel] && eoM.M[eoSel].ent) {
+const A = eoM.M[eoSel], showTip = (ev, e) => { const rr = box.getBoundingClientRect(); tip.innerHTML = '<b>' + e.n + '</b><br>' + eoSgn(e.p, 1) + '% sejak ' + (e.since || A.mo[0]) + (e.usd ? ' (USD)' : ' (mata uang lokal)') + '<br>dari puncak ' + eoSgn(e.dd, 1) + '% · klik untuk detail'; tip.style.left = Math.min(rr.width - 220, Math.max(4, ev.clientX - rr.left + 12)) + 'px'; tip.style.top = Math.max(4, ev.clientY - rr.top - 56) + 'px'; tip.style.opacity = 1; };
 const hide = () => { tip.style.opacity = 0; };
 const ordered = A.ent.filter((e) => e.ct || e.c).sort((a, b) => (a.k === A.se.k) - (b.k === A.se.k));
 ordered.forEach((e) => {
@@ -1223,10 +1252,11 @@ let el;
 if (ft) el = gAs.append('path').attr('d', path(ft));
 else { const [x, y] = proj(e.c); el = gAs.append('circle').attr('cx', x).attr('cy', y).attr('r', 5); }
 el.attr('fill', col).attr('fill-opacity', fo).attr('stroke', on ? 'var(--color-fg)' : 'var(--color-panel)').attr('stroke-width', on ? 1.6 : 0.8).attr('stroke-linejoin', 'round').attr('tabindex', 0).attr('role', 'button').attr('aria-label', e.n + ' ' + eoSgn(e.p, 1) + '%').style('cursor', 'pointer')
-.on('click', () => eoAsiaPick(e.k)).on('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); eoAsiaPick(e.k); } });
+.on('click', () => eoAsiaPick(e.k)).on('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); eoAsiaPick(e.k); } })
+.on('mousemove', (ev) => showTip(ev, e)).on('mouseleave', hide);
 });
-['spx', 'asx'].forEach((pk, pi) => { const u = A.ent.find((e) => e.k === pk); if (!u) return; const gu = gAs.append('g').attr('class', 'eo-map-node').style('cursor', 'pointer').attr('transform', 'translate(10,' + (H - 12 - pi * 16) + ')').on('click', () => eoAsiaPick(pk)); gu.append('text').attr('class', 'small').attr('text-anchor', 'start').text(u.n.split(' (')[0] + ' (' + (pk === 'spx' ? 'S&P 500' : 'ASX 200') + ') ' + eoSgn(u.p, 0) + '% · klik untuk detail'); });
-ordered.filter((e) => (e.lab && e.k !== 'spx' && e.k !== 'asx') || e.k === A.se.k).forEach((e) => { const [x, y] = proj(e.c); gAs.append('g').attr('class', 'eo-map-node').append('text').attr('class', 'small').attr('pointer-events', 'none').attr('x', x + (e.dx || 0)).attr('y', y + (e.dy === undefined ? -8 : e.dy)).attr('text-anchor', e.a || 'middle').attr('font-weight', e.k === A.se.k ? 700 : 600).text(eoSgn(e.p, 0) + '%'); });
+MV.offmap.forEach(([pk, pkName], pi) => { const u = A.ent.find((e) => e.k === pk); if (!u) return; const gu = gAs.append('g').attr('class', 'eo-map-node').style('cursor', 'pointer').attr('transform', 'translate(10,' + (H - 12 - pi * 16) + ')').on('click', () => eoAsiaPick(pk)); gu.append('text').attr('class', 'small').attr('text-anchor', 'start').text(u.n.split(' (')[0] + ' (' + pkName + ') ' + eoSgn(u.p, 0) + '% · klik untuk detail'); });
+ordered.filter((e) => (e.lab && !MV.offmap.some((o) => o[0] === e.k)) || e.k === A.se.k).forEach((e) => { const [x, y] = proj(e.c); gAs.append('g').attr('class', 'eo-map-node').append('text').attr('class', 'small').attr('pointer-events', 'none').attr('x', x + (e.dx || 0)).attr('y', y + (e.dy === undefined ? -8 : e.dy)).attr('text-anchor', e.a || 'middle').attr('font-weight', e.k === A.se.k ? 700 : 600).text(eoSgn(e.p, 0) + '%'); });
 }
 Object.keys(eoM.nodes).forEach((key) => {
 const n = eoM.nodes[key], [x, y] = proj(n.c), main = key === 'id' || key === 'us' || key === 'global';
@@ -1241,15 +1271,15 @@ eoApply();
 function eoApply() {
 EO_CH.forEach((c) => {
 const on = c.id === eoSel;
-d3.selectAll('.eo-ch-' + c.id).classed('eo-map-dim', !on).style('display', (on || c.id !== 'trade' && c.id !== 'commodity' && eoSel !== 'asia') ? null : 'none');
+d3.selectAll('.eo-ch-' + c.id).classed('eo-map-dim', !on).style('display', (on || c.id !== 'trade' && c.id !== 'commodity' && !eoIsMkt(eoSel)) ? null : 'none');
 const b = document.getElementById('eo-chip-' + c.id);
 if (b) { b.setAttribute('aria-pressed', on ? 'true' : 'false'); const i = b.querySelector('i'); if (i && eoM) i.style.background = eoM.M[c.id].col; }
 });
 d3.select('#eo-reg').style('display', eoSel === 'commodity' ? null : 'none');
-d3.select('#eo-asia').style('display', eoSel === 'asia' ? null : 'none');
-d3.selectAll('.eo-base').style('display', eoSel === 'asia' ? 'none' : null);
-d3.selectAll('.eo-map-hit').style('display', eoSel === 'asia' ? 'none' : null);
-if (eoSel === 'asia') { const t = document.getElementById('eo-map-tip'); if (t) t.style.opacity = 0; }
+d3.select('#eo-mkt').style('display', eoIsMkt(eoSel) ? null : 'none');
+d3.selectAll('.eo-base').style('display', eoIsMkt(eoSel) ? 'none' : null);
+d3.selectAll('.eo-map-hit').style('display', eoIsMkt(eoSel) ? 'none' : null);
+if (eoIsMkt(eoSel)) { const t = document.getElementById('eo-map-tip'); if (t) t.style.opacity = 0; }
 }
 function eoTradeBars() {
 const rows = eoM.trade.slice().sort((a, b) => (b.exp || 0) - (a.exp || 0));
@@ -1295,28 +1325,28 @@ const labels = ids.map((id) => (info.data.find((r) => r.id === id) || {}).label)
 if (!labels.length) return '—';
 return labels.includes('Rendah') ? 'Rendah' : labels.every((l) => l === 'Tinggi') ? 'Tinggi' : 'Sedang';
 }
-let eoAsiaTab = 'country', eoAsiaSel = 'ihsg';
-function eoAsiaPick(k) { eoAsiaSel = k; eoAsiaTab = 'country'; eoSafe(() => { eoM = eoBuild(); }); eoSafe(eoDrawMap); eoSafe(eoDetail); }
+let eoAsiaTab = 'country';
+function eoAsiaPick(k) { eoMktSel[eoSel] = k; eoAsiaTab = 'country'; eoSafe(() => { eoM = eoBuild(); }); eoSafe(eoDrawMap); eoSafe(eoDetail); }
 function eoAsiaTabs(m) {
 const T = [['country', 'Negara'], ['rank', 'Peringkat'], ['trend', 'Tren 12 bulan'], ['info', 'Cara membaca']];
 let h = '<div class="eo-tabs" role="tablist">' + T.map((t) => '<button type="button" role="tab" class="eo-tab" data-asia-tab="' + t[0] + '" aria-selected="' + (eoAsiaTab === t[0]) + '">' + t[1] + '</button>').join('') + '</div>';
 if (eoAsiaTab === 'country') h += eoAsiaCountry(m);
 else if (eoAsiaTab === 'trend') h += eoSpark(m, m.months) + '<div class="eo-map-sub">Indeks 100 = ' + m.mo[0] + '. Garis di bawah 100 berarti lebih murah dari awal periode.</div>';
-else if (eoAsiaTab === 'info') h += '<p class="eo-map-expl">' + m.expl + '</p><p class="eo-map-expl">Indeks Asia memakai mata uang lokal, ETF memakai dolar. Asia Tenggara hanya lewat ETF karena indeksnya tidak tersedia. Dengan 12 bulan data, korelasi hanya petunjuk. Warna China di peta mewakili indeks Shenzhen; Hong Kong (Hang Seng) dan Singapura adalah titik kecil karena batasnya terlalu kecil untuk peta ini.</p>';
+else if (eoAsiaTab === 'info') h += '<p class="eo-map-expl">' + m.expl + '</p><p class="eo-map-expl">' + m.info + '</p>';
 else h += eoAsiaRank(m);
 return h;
 }
-const EO_CTX = {"ihsg": "IHSG didominasi saham bank dan komoditas, dengan bobot teknologi yang kecil.", "eido": "ETF yang melacak saham Indonesia dalam dolar, jadi ikut menanggung pelemahan Rupiah.", "spx": "Indeks yang didominasi saham teknologi besar.", "nifty": "Banyak berisi bank, keuangan, dan konsumsi dalam negeri.", "kospi": "Bobot besar pada Samsung dan SK Hynix, jadi sangat peka pada siklus chip dan AI.", "nikkei": "Indeks berbobot harga yang berisi perusahaan industri dan teknologi Jepang.", "hsi": "Banyak berisi perusahaan China daratan yang tercatat di Hong Kong.", "taiex": "Sangat bergantung pada semikonduktor, terutama TSMC.", "asx": "Didominasi bank dan tambang, komposisinya paling mirip IHSG di antara pembanding.", "sz": "Berisi perusahaan manufaktur dan teknologi China, berbeda dari indeks Shanghai.", "eem": "ETF pasar berkembang (China, India, Taiwan, Korea, dll.), patokan pasar berkembang pada umumnya.", "thd": "ETF dalam USD untuk saham negara ini, jadi ikut mencerminkan kurs mata uangnya.", "ewm": "ETF dalam USD untuk saham negara ini, jadi ikut mencerminkan kurs mata uangnya.", "ephe": "ETF dalam USD untuk saham negara ini, jadi ikut mencerminkan kurs mata uangnya.", "ews": "ETF dalam USD untuk saham negara ini, jadi ikut mencerminkan kurs mata uangnya.", "vnm": "ETF dalam USD untuk saham negara ini, jadi ikut mencerminkan kurs mata uangnya."};
+const EO_CTX = {"ftse": "Banyak berisi bank, minyak, tambang, dan farmasi multinasional; sebagian besar pendapatannya dari luar Inggris. Komposisinya cukup mirip IHSG (bank dan komoditas).", "dax": "Indeks industri, otomotif, dan kimia Jerman. DAX dihitung sebagai total return (dividen ikut dihitung), jadi tidak sepenuhnya sebanding dengan indeks harga lain.", "cac": "Didominasi barang mewah, energi, dan bank Prancis.", "csi": "300 saham terbesar di bursa Shanghai dan Shenzhen; patokan umum pasar saham China daratan.", "urth": "ETF MSCI World dalam USD: sekitar 1.400 saham negara maju, didominasi AS. Patokan \"pasar dunia\" untuk investor global.", "ihsg": "IHSG didominasi saham bank dan komoditas, dengan bobot teknologi yang kecil.", "eido": "ETF yang melacak saham Indonesia dalam dolar, jadi ikut menanggung pelemahan Rupiah.", "spx": "Indeks yang didominasi saham teknologi besar.", "nifty": "Banyak berisi bank, keuangan, dan konsumsi dalam negeri.", "kospi": "Bobot besar pada Samsung dan SK Hynix, jadi sangat peka pada siklus chip dan AI.", "nikkei": "Indeks berbobot harga yang berisi perusahaan industri dan teknologi Jepang.", "hsi": "Banyak berisi perusahaan China daratan yang tercatat di Hong Kong.", "taiex": "Sangat bergantung pada semikonduktor, terutama TSMC.", "asx": "Didominasi bank dan tambang, komposisinya paling mirip IHSG di antara pembanding.", "sz": "Berisi perusahaan manufaktur dan teknologi China, berbeda dari indeks Shanghai.", "eem": "ETF pasar berkembang (China, India, Taiwan, Korea, dll.), patokan pasar berkembang pada umumnya.", "thd": "ETF dalam USD untuk saham negara ini, jadi ikut mencerminkan kurs mata uangnya.", "ewm": "ETF dalam USD untuk saham negara ini, jadi ikut mencerminkan kurs mata uangnya.", "ephe": "ETF dalam USD untuk saham negara ini, jadi ikut mencerminkan kurs mata uangnya.", "ews": "ETF dalam USD untuk saham negara ini, jadi ikut mencerminkan kurs mata uangnya.", "vnm": "ETF dalam USD untuk saham negara ini, jadi ikut mencerminkan kurs mata uangnya."};
 function eoAsiaCountry(m) {
 const e = m.se, v = e.vals, n = v.length, last = n - 1, mm = (i) => (v[i] != null && v[i - 1] != null) ? (v[i] / v[i - 1] - 1) * 100 : null;
 const rets = v.map((x, i) => i ? mm(i) : null), valid = rets.map((r, i) => r === null ? null : i).filter((i) => i !== null);
 const bi = valid.reduce((a, i) => rets[i] > rets[a] ? i : a, valid[0]), wi = valid.reduce((a, i) => rets[i] < rets[a] ? i : a, valid[0]);
 const pk = v.indexOf(d3.max(v)), r3 = v[last - 3] ? (v[last] / v[last - 3] - 1) * 100 : null;
-const eem = m.ent.find((x) => x.k === 'eem'), cor = e.k !== 'ihsg' ? eoPearson(m.ih.vals.slice(1).map((x, i) => x / m.ih.vals[i] - 1), v.slice(1).map((x, i) => x / v[i] - 1)) : null;
-const rows = [['Perubahan ' + (n - 1) + ' bulan', eoSgn(e.p, 1) + '%'], ['Dari puncak', eoSgn(e.dd, 1) + '%' + (pk === last ? ' (sedang di puncak)' : ' (puncak ' + m.mo[pk] + ')')], ['3 bulan terakhir', r3 === null ? '–' : eoSgn(r3, 1) + '%'],
+const eem = m.ent.find((x) => x.k === EO_MKT[m.view].bench), cor = e.k !== 'ihsg' ? eoPearson(m.ih.vals.slice(1).map((x, i) => x / m.ih.vals[i] - 1), v.slice(1).map((x, i) => x / v[i] - 1)) : null;
+const f0 = v.findIndex((x) => x != null), rows = [['Perubahan ' + (n - 1 - f0) + ' bulan' + (e.since ? ' (sejak ' + e.since + ')' : ''), eoSgn(e.p, 1) + '%'], ['Dari puncak', eoSgn(e.dd, 1) + '%' + (pk === last ? ' (sedang di puncak)' : ' (puncak ' + m.mo[pk] + ')')], ['3 bulan terakhir', r3 === null ? '–' : eoSgn(r3, 1) + '%'],
 ['Bulan terbaik', eoSgn(rets[bi], 1) + '% (' + m.mo[bi] + ')'], ['Bulan terburuk', eoSgn(rets[wi], 1) + '% (' + m.mo[wi] + ')']];
 if (e.k !== 'ihsg') rows.push(['Selisih dengan IHSG', eoSgn(e.p - m.ih.p, 1) + ' poin'], ['Korelasi bulanan dengan IHSG', eoFmt(cor.r, 2) + ' (n=' + cor.n + ')']);
-if (eem && e.k !== 'eem') rows.push(['Selisih dengan EEM', eoSgn(e.p - eem.p, 1) + ' poin']);
+if (eem && e.k !== eem.k) rows.push(['Selisih dengan ' + eem.n.split(' (')[0].replace('Pasar berkembang', 'EEM'), eoSgn(e.p - eem.p, 1) + ' poin']);
 return '<dl class="eo-dl">' + rows.map((r) => '<div><dt>' + r[0] + '</dt><dd>' + r[1] + '</dd></div>').join('') + '</dl><p class="eo-map-expl">' + (EO_CTX[e.k] || '') + '</p><div class="eo-map-sub">Konteks umum di luar data dashboard. Korelasi dari sampel kecil, bukan sebab-akibat. Klik negara lain di peta untuk membandingkan.</div>';
 }
 function eoAsiaRank(m) {
@@ -1325,18 +1355,18 @@ const W = 340, rh = 19, H = rows.length * rh + 6, l = 150, rEnd = W - 46, lo = M
 const x = (v) => l + (rEnd - l) * (v - lo) / ((hi - lo) || 1), x0 = x(0);
 let s = '<svg class="eo-map-spark" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Peringkat perubahan harga pasar saham">';
 rows.forEach((r, i) => { const y = 3 + i * rh, x1 = x(r.p);
-s += '<text x="' + (l - 6) + '" y="' + (y + 12) + '" text-anchor="end"' + (r.k === eoAsiaSel ? ' font-weight="700"' : '') + '>' + r.n.replace(' (ETF ', ' (').replace(', USD)', ')') + '</text>'
-+ '<rect x="' + Math.min(x0, x1) + '" y="' + (y + 2) + '" width="' + Math.max(1, Math.abs(x1 - x0)) + '" height="12" fill="' + eoAsiaCol(r.p) + '" fill-opacity="' + (r.usd ? 0.55 : 1) + '"' + (r.k === eoAsiaSel ? ' stroke="var(--color-fg)" stroke-width="1.5"' : '') + '/>'
-+ '<text x="' + (W - 2) + '" y="' + (y + 12) + '" text-anchor="end"' + (r.k === eoAsiaSel ? ' font-weight="700"' : '') + '>' + eoSgn(r.p, 1) + '%</text><rect data-asia-pick="' + r.k + '" x="0" y="' + y + '" width="' + W + '" height="' + rh + '" fill="transparent" style="cursor:pointer"/>'; });
+s += '<text x="' + (l - 6) + '" y="' + (y + 12) + '" text-anchor="end"' + (r.k === eoMktSel[m.view] ? ' font-weight="700"' : '') + '>' + r.n.replace(' (ETF ', ' (').replace(', USD)', ')') + (r.since ? ' *' : '') + '</text>'
++ '<rect x="' + Math.min(x0, x1) + '" y="' + (y + 2) + '" width="' + Math.max(1, Math.abs(x1 - x0)) + '" height="12" fill="' + eoAsiaCol(r.p) + '" fill-opacity="' + (r.usd ? 0.55 : 1) + '"' + (r.k === eoMktSel[m.view] ? ' stroke="var(--color-fg)" stroke-width="1.5"' : '') + '/>'
++ '<text x="' + (W - 2) + '" y="' + (y + 12) + '" text-anchor="end"' + (r.k === eoMktSel[m.view] ? ' font-weight="700"' : '') + '>' + eoSgn(r.p, 1) + '%</text><rect data-asia-pick="' + r.k + '" x="0" y="' + y + '" width="' + W + '" height="' + rh + '" fill="transparent" style="cursor:pointer"/>'; });
 s += '<line x1="' + x0 + '" x2="' + x0 + '" y1="0" y2="' + H + '" stroke="var(--color-fg-muted)"/></svg>';
-return s + '<div class="eo-map-leg"><span style="--k:var(--eo-c-in)">Naik</span><span style="--k:var(--eo-c-out)">Turun</span></div><div class="eo-map-sub">Batang pucat = ETF dalam USD, batang pekat = indeks mata uang lokal.</div>';
+return s + '<div class="eo-map-leg"><span style="--k:var(--eo-c-in)">Naik</span><span style="--k:var(--eo-c-out)">Turun</span></div><div class="eo-map-sub">Batang pucat = ETF dalam USD, batang pekat = indeks mata uang lokal.' + (rows.some((r) => r.since) ? ' * dihitung sejak ' + rows.find((r) => r.since).since + ' karena data bulan pertama tidak tersedia.' : '') + '</div>';
 }
 function eoDetail() {
 const el = document.getElementById('eo-map-detail'); if (!el) return;
 if (!eoM) { el.innerHTML = '<div class="eo-map-sub">Memuat…</div>'; return; }
 const c = EO_CH.find((x) => x.id === eoSel), m = eoM.M[eoSel], conf = eoConf(c.conf);
 const nm = (k) => k === 'global' ? 'Dunia' : k === 'us' ? 'Amerika Serikat' : k === 'id' ? 'Indonesia' : k === 'china' ? 'China' : k;
-const kick = c.id === 'trade' ? 'Indonesia → mitra dagang' : c.id === 'commodity' ? 'Harga dunia → daerah penghasil' : c.id === 'asia' ? 'Klik negara di peta · pasar saham 12 bulan' : nm(c.from) + ' → ' + nm(c.to);
+const kick = c.id === 'trade' ? 'Indonesia → mitra dagang' : c.id === 'commodity' ? 'Harga dunia → daerah penghasil' : eoIsMkt(c.id) ? 'Klik negara di peta · pasar saham 12 bulan' : nm(c.from) + ' → ' + nm(c.to);
 el.innerHTML = '<div class="eo-map-kick">' + kick + '</div><h3>' + c.label + '</h3>'
 + '<div class="eo-map-big">' + m.value + '</div><div class="eo-map-sub">' + m.unit + '</div><div class="eo-map-sub">' + m.sub + '</div>'
 + (m.rank ? eoAsiaTabs(m) : (m.bars ? eoTradeBars() : eoSpark(m, eoM.months)) + '<p class="eo-map-expl">' + m.expl + '</p>')
@@ -1377,7 +1407,7 @@ return ['IHSG: lebih banyak masalah Indonesia daripada Asia', 'IHSG ' + eoSgn(A.
 el.innerHTML = items.map((i) => '<li><b class="t">' + i[0] + '</b>' + i[1] + (i[2] ? '<div class="n">' + i[2] + '</div>' : '') + '</li>').join('');
 }
 function eoSafe(f) { try { f(); } catch (e) { console.warn('peta:', e && e.message); } }
-function eoSelect(id) { const was = eoSel; eoSel = id; if ((id === 'asia') !== (was === 'asia')) eoSafe(eoDrawMap); eoSafe(eoApply); eoSafe(eoDetail); }
+function eoSelect(id) { const was = eoSel; eoSel = id; if (id !== was && (eoIsMkt(id) || eoIsMkt(was))) eoSafe(eoDrawMap); eoSafe(eoApply); eoSafe(eoDetail); }
 function eoRender() { eoSafe(eoChips); eoSafe(() => { eoM = eoBuild(); }); eoSafe(eoDrawMap); eoSafe(eoDetail); eoSafe(eoInsights); }
 eoRender();
 dash.onData(eoRender);

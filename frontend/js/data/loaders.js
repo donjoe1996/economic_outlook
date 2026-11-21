@@ -177,4 +177,11 @@ dash.loader('valuasi', {
 description: 'Baris tab Valuasi IHSG: PER (B), PBV (C), penerbit (E), URL (F), kepercayaan (G), catatan (H).',
 fn: ({ answer }) => sheetRows(answer).map((r) => ({ date: r[0], per: numOrNull(r[1]), pbv: numOrNull(r[2]), source: r[4], url: r[5], confidence: r[6], notes: r[7], kind: r[8], avg: r[9], pos: r[10] })).filter((r) => r.per !== null),
 });
+dash.loader('sahamglobal', {
+description: 'Baris tab Saham Global: penutupan akhir bulan IHSG (B), S&P 500 (C), FTSE 100 (I), DAX (J), CAC 40 (K), Nikkei 225 (L), Hang Seng (M), CSI 300 (N), ETF URTH dan EIDO dalam USD (O-P), kepercayaan (G).',
+fn: ({ answer }) => sheetRows(answer).map((r) => ({
+month: r[0], ihsg: numOrNull(r[1]), spx: numOrNull(r[2]), unit: r[3], source: r[4], url: r[5], confidence: r[6], notes: r[7],
+ftse: numOrNull(r[8]), dax: numOrNull(r[9]), cac: numOrNull(r[10]), nikkei: numOrNull(r[11]), hsi: numOrNull(r[12]), csi: numOrNull(r[13]), urth: numOrNull(r[14]), eido: numOrNull(r[15]),
+})).filter((r) => r.ihsg !== null),
+});
 })();

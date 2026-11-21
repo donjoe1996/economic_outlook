@@ -277,6 +277,16 @@ datasets:
     release: "Rumus GOOGLEFINANCE; salin baris rumus ke bawah tiap bulan"
     write: none
 
+  sahamglobal:
+    title: Saham global bulanan
+    description: Penutupan akhir bulan IHSG vs pasar besar dunia (S&P 500, FTSE 100, DAX, CAC 40, Nikkei 225, Hang Seng, CSI 300) dan ETF URTH/EIDO dalam USD (rumus Google Finance).
+    range: "'Saham Global'!A2:P"
+    frequency: "monthly"
+    lag_days: 1
+    release: "Rumus GOOGLEFINANCE; salin baris rumus ke bawah tiap bulan"
+    note: "CSI 300 tidak punya data Okt'25 di Google Finance, jadi perubahannya dihitung sejak Nov'25."
+    write: none
+
   sektor:
     title: Komposisi IHSG per sektor
     description: Kapitalisasi dan bobot 11 sektor IDX-IC pada akhir Mar 2026, saham terbesar tiap sektor.
