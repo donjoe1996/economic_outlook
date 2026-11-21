@@ -237,7 +237,7 @@ The macro dashboard asks "is the environment good for Indonesian equities?".
 `stock.html?tk=BMRI` asks the next question for one stock: **at this price,
 with these fundamentals, flows and dividends, what am I actually buying?**
 It is reached from the **Saham individu** cards at the top of the rail (each shows
-the latest close), the BMRI tile in the monitor, the
+the latest close; type any code in the box below them), the BMRI tile in the monitor, the
 link in the "Pasar saham" panel, or by typing `bmri` in the command bar. Its
 own strip of macro tiles links back to the matching dashboard section.
 
@@ -274,12 +274,53 @@ so anything that exports only the first tab keeps working. Add a dividend,
 a flow figure or a new fundamental row in the Sheet (or through **+ Data**),
 then press **⟳ Tarik** on the stock page.
 
-**Adding another stock** (say BBRI): copy `frontend/js/stock/BMRI.js` to
-`BBRI.js` and edit its names, dataset ids, valuation defaults, dividend
-scenarios and narrative; add its five datasets (and its spreadsheet alias)
-to `config/datasets.yaml`; add the `<script>` tag to `stock.html`; add it to
-`STOCKS` in `terminal.js`. The engine (`js/stock/engine.js`) is shared; the
-peer group comes from `SECT` in the engine (only `bank` so far).
+### Any other stock: type its code
+
+Type a code in the **Ketik kode** box under the stock cards (or in the command
+bar, e.g. `tlkm`). A stock that isn't on the list yet opens a short form:
+name, sector (bank or other) and up to five peers. **Tambahkan** then:
+
+1. creates a spreadsheet **IEO Saham** in your Google Drive the first time
+   (its id is kept in `data/spreadsheets.local.json`; put an id under
+   `spreadsheets: saham:` in the YAML to use one you already have);
+2. writes the stock in the **Daftar** tab;
+3. adds a **Harga KODE** tab for it and each peer, with a daily
+   `GOOGLEFINANCE("IDX:KODE", ...)` formula since 2016;
+4. adds labelled, empty rows for it in **Fundamental** (bank and other sectors
+   get different keys);
+5. copies the whole-market foreign-flow rows (Kode `PASAR`) once from BMRI's
+   flow tab, so every stock has the market context.
+
+The **Profil** tab works as soon as the prices arrive. Each other tab names
+the rows it still needs until they are filled. Every shared tab starts with a
+**Kode** column, so one tab holds all stocks:
+
+| Tab | One row per | Columns after Kode |
+| --- | --- | --- |
+| Daftar | stock | Nama, Sektor (bank/umum), Pembanding, Catatan |
+| Fundamental | stock × key | Kunci, Keterangan, Nilai, Satuan, Catatan (period; source) |
+| Riwayat fundamental | stock × year end | Tanggal, BVPS, EPS, DPS, Sumber |
+| Dividen | payment | Tanggal bayar, Tahun buku, interim/final, Per saham, Catatan |
+| Arus asing | flow figure or event | Mulai, Selesai, Jenis, Net (Rp miliar), Basis, Kualitas, Sumber, Catatan |
+
+**Let Claude fill it.** Ask Claude Code `isi data saham BBRI`. The project
+skill `.claude/skills/stock-data` works in three steps:
+
+1. Run `python scripts/stock_rows.py todo BBRI` to see what is blank.
+2. Research the figures from the issuer's filings (IDX, investor relations),
+   then regulators (OJK, BEI, KSEI), then established press only where needed.
+   It never uses Wikipedia or aggregators.
+3. Write a draft to `data/stocks/BBRI.json`, check it with
+   `python scripts/stock_rows.py write data/stocks/BBRI.json --dry-run`, and
+   write it to the Sheet. Every value carries its source in Catatan/Sumber.
+
+A batch of rows costs one read, one write and one refresh per tab, which keeps
+it well under Google's request limit.
+
+**Hand-written commentary** is optional. A stock with its own
+`frontend/js/stock/<CODE>.js` (like BMRI) uses that file's names and
+narrative; every other stock gets number-driven text from
+`js/stock/generic.js`. The engine (`js/stock/engine.js`) is shared.
 
 Notes on this port from the prototype:
 
@@ -354,7 +395,8 @@ Kepulauan Riau, and NTT.
 ```
 
 They cover the write path, the freshness rules, the retry/skip behaviour,
-and the insights number check. They use a fake in-memory Sheet, so they never
+the insights number check, and adding a stock (the Saham sheet, its tabs and
+GOOGLEFINANCE formulas, batched writes). They use a fake in-memory Sheet, so they never
 touch your real one.
 
 ## Known limits, worth thinking about

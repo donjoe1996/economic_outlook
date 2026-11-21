@@ -2,6 +2,7 @@
 
 Fast reads answer directly:
     GET  /api/data?group=macro     datasets for one page, from the local cache
+         &stock=BBRI               ...plus that stock's (and its peers') price datasets
     GET  /api/datasets             datasets + columns (for the form)
     GET  /api/auth/status          is Google connected? (no network)
     GET  /api/metadata             per dataset: newest period, what is due, blanks, last pull
@@ -13,6 +14,8 @@ Slow actions start a background job and answer at once with the job
     POST /api/datasets/{id}/rows   add or update one row in the Sheet
     POST /api/updaters/preview     ask FRED etc. for new periods
     POST /api/updaters/apply       write the rows you confirmed
+    POST /api/stocks               add a stock (creates its tabs in the Saham sheet)
+    GET  /api/stocks               the stocks with a page, latest close, how complete
     GET  /api/jobs/{id}            progress of one job
     GET  /api/jobs                 recent jobs (the activity log)
 
@@ -30,6 +33,7 @@ from .jobs import Job, JobRunner
 from .service import Service
 from .retry import short_error
 from .sheets import GoogleSheets, SheetsNotAuthorized
+from . import stocks
 from .updaters import REGISTRY, http_get
 
 app = FastAPI(title="Indonesia Economic Outlook", docs_url="/api/docs", redoc_url=None)
@@ -41,7 +45,9 @@ jobs = JobRunner()
 def service() -> Service:
     # Re-read the YAML on every request, so edits to config/datasets.yaml
     # show up without restarting the server.
-    return Service(load_config(), Cache(), google)
+    # Price datasets of stocks in the Saham sheet's Daftar tab are added here.
+    cache = Cache()
+    return Service(stocks.with_stock_datasets(load_config(), cache), cache, google)
 
 
 class RefreshBody(BaseModel):
@@ -52,6 +58,13 @@ class RowBody(BaseModel):
     values: list[str]
 
 
+class StockBody(BaseModel):
+    code: str
+    name: str = ""
+    sector: str = "umum"
+    peers: list[str] = []
+
+
 class ApplyBody(BaseModel):
     dataset: str
     rows: list[list[str]]
@@ -59,11 +72,14 @@ class ApplyBody(BaseModel):
 
 # ------------------------------------------------------------------ reads
 @app.get("/api/data")
-def get_data(group: str | None = None, ids: str | None = None):
+def get_data(group: str | None = None, ids: str | None = None, stock: str | None = None):
     """group=macro (dashboard) or group=stock (stock pages), plus ids=a,b,c
-    for single extra datasets; omit both for everything."""
+    for single extra datasets and stock=CODE for that stock's prices; omit
+    all for everything."""
     svc = service()
     extra = [i for i in (ids or "").split(",") if i]
+    if stock:
+        extra += stocks.datasets_for(svc.cfg, svc.cache, stock)
     return {"sheet_url": svc.cfg.sheet_url, "google": google.status(), "datasets": svc.snapshot(group, extra)}
 
 
@@ -75,6 +91,12 @@ def get_datasets():
 @app.get("/api/metadata")
 def get_metadata():
     return service().metadata()
+
+
+@app.get("/api/stocks")
+def get_stocks():
+    svc = service()
+    return {"stocks": stocks.summary(svc.cfg, svc.cache), "saham_sheet": svc.cfg.spreadsheets.get(stocks.ALIAS) or None}
 
 
 @app.get("/api/auth/status")
@@ -123,6 +145,16 @@ def add_row(ds_id: str, body: RowBody):
         return service().upsert(ds_id, body.values, progress=p)
 
     return jobs.start("write", "Menyimpan ke Google Sheet", work).view()
+
+
+@app.post("/api/stocks")
+def add_stock(body: StockBody):
+    def work(p: Job):
+        google.ensure_signed_in(progress=p)
+        return stocks.add_stock(service(), body.code, body.name, body.sector,
+                                stocks.parse_codes(",".join(body.peers)), progress=p)
+
+    return jobs.start("stock", f"Menambahkan saham {body.code.strip().upper()}", work).view()
 
 
 @app.post("/api/updaters/preview")

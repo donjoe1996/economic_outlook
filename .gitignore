@@ -13,3 +13,9 @@ data/insights/*.json
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# Spreadsheets the app created for you (e.g. "IEO Saham"): alias -> id
+data/spreadsheets.local.json
+
+# Stock data drafts written by the stock-data Claude skill before they go to the Sheet
+data/stocks/

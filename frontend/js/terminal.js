@@ -14,6 +14,10 @@
   const nf = (v, d) => Number(v).toLocaleString('id-ID', { minimumFractionDigits: d, maximumFractionDigits: d });
   const sgn = (v, d) => (v > 0 ? '+' : v < 0 ? '−' : '±') + nf(Math.abs(v), d);
 
+  // The toolbar wraps to two lines on narrow screens; the sticky rail sits below it.
+  const topBar = $('.t-top');
+  if (topBar && window.ResizeObserver) new ResizeObserver(() => document.documentElement.style.setProperty('--t-top-h', topBar.offsetHeight + 'px')).observe(topBar);
+
   // ------------------------------------------------------------------ theme
   const themeBtn = $('#t-theme');
   function setTheme(t) {
@@ -58,11 +62,13 @@
     MINE: 'tambang batu bara coal nikel nickel cpo komoditas adro ptba antm inco', RATE: 'sbn yield obligasi valuasi per pbv srbi ksei',
     MAP: 'peta map asia global perdagangan ekspor', AI: 'insight claude ringkasan ai', 'Q&A': 'pertanyaan syarat beli',
   };
-  // Single-stock pages (stock.html?tk=CODE). Add a code here when a new
-  // js/stock/<CODE>.js exists, so the rail, command bar and monitor link to it.
-  // [code, name, sector, column of the monthly 'saham' dataset (for the rail price)]
-  const STOCKS = [['BMRI', 'Bank Mandiri', 'Bank', 'bmri']];
+  // Single-stock pages (stock.html?tk=CODE). The list comes from /api/stocks:
+  // stocks with their own sheet (BMRI) plus every row of the Saham sheet's
+  // Daftar tab. Any four-letter code can be typed; a new one is offered for adding.
+  let STOCKS = [];   // [{code, name, sector, last, prev, last_date, fund_filled, fund_total, ...}]
   const onStockPage = !!window.EO_TK;
+  const isCode = (q) => /^[a-z]{4}$/i.test(q);
+  const PLAIN_WORDS = new Set('kurs rate suku riil ihsg bank flow batu bara coal srbi ksei peta asia beli data'.split(' '));
   const stockUrl = (code) => 'stock.html?tk=' + code;
 
   function go(find) {
@@ -76,42 +82,56 @@
   // separate pages to zoom into, not places on this page.
   const nav = $('#t-nav');
   const navLinks = [];
-  const stockCards = [];
+  const stockBox = el('div', 't-stocks');
   function stockGroup() {
-    nav.append(el('div', 't-nav-h', 'Saham individu'));
-    STOCKS.forEach(([code, name, sector, col]) => {
-      const a = el('a', 't-stock' + (onStockPage && window.EO_TK === code ? ' on' : ''));
-      a.href = stockUrl(code);
-      a.title = code + ' ' + name + ': profil, valuasi, arus asing, dividen';
-      const top = el('span', 't-stock-top');
-      top.append(el('span', 't-code', code), el('span', 't-stock-n', name));
-      const pxl = el('span', 't-stock-px', sector);
-      a.append(top, pxl);
-      nav.append(a);
-      stockCards.push([a, pxl, col, sector]);
+    nav.append(el('div', 't-nav-h', 'Saham individu'), stockBox);
+    const form = el('form', 't-stock-add');
+    const input = el('input');
+    input.type = 'text'; input.maxLength = 4; input.placeholder = 'Ketik kode, mis. BBRI';
+    input.setAttribute('aria-label', 'Buka atau tambahkan saham: ketik kode BEI empat huruf');
+    input.autocomplete = 'off'; input.spellcheck = false;
+    form.append(input);
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const q = input.value.trim();
+      if (isCode(q)) location.href = stockUrl(q.toUpperCase());
+      else { input.classList.add('t-miss'); setTimeout(() => input.classList.remove('t-miss'), 600); }
     });
+    nav.append(form);
+    drawStocks();
   }
-  // Latest close on each card: the stock page's own daily price when we are on it,
-  // otherwise the month-end close the dashboard already has.
-  function stockPrices() {
-    stockCards.forEach(([a, pxl, col, sector]) => {
-      let v, p, per;
-      const code = a.querySelector('.t-code').textContent;
-      if (onStockPage && window.EO_TK === code && window.EOLab && window.EOLab.last) {
-        ({ v, p, per } = window.EOLab.last());
-      } else {
-        const d = dash.data('saham');
-        if (d.status !== 'ok' || !Array.isArray(d.data)) return;
-        const rows = d.data.filter((r) => r[col] != null && !isNaN(r[col]));
-        if (rows.length < 2) return;
-        v = rows[rows.length - 1][col]; p = rows[rows.length - 2][col]; per = rows[rows.length - 1].month;
-      }
-      if (!isFinite(v)) return;
-      const chg = p ? (v / p - 1) * 100 : 0;
-      pxl.replaceChildren(el('span', null, 'Rp ' + nf(v, 0)), el('span', 't-stock-chg ' + (chg > 0 ? 't-up' : chg < 0 ? 't-dn' : ''), sgn(chg, 1) + '%'), el('span', 't-stock-per', String(per).replace(/ 20(\d\d)$/, " '$1")));
-      a.title = code + ': ' + sector + ' · penutupan ' + per + ' · klik untuk profil, valuasi, arus asing, dividen';
-    });
+  function card(s) {
+    const cur = onStockPage && String(window.EO_TK).toUpperCase() === s.code;
+    const a = el('a', 't-stock' + (cur ? ' on' : ''));
+    a.href = stockUrl(s.code);
+    const top = el('span', 't-stock-top');
+    top.append(el('span', 't-code', s.code), el('span', 't-stock-n', s.name || s.code));
+    const line = el('span', 't-stock-px');
+    if (s.last) {
+      const chg = s.prev ? (s.last / s.prev - 1) * 100 : 0;
+      const d = new Date(String(s.last_date).replace(/ .*/, '')), per = isNaN(d) ? '' : d.getDate() + ' ' + d.toLocaleString('id-ID', { month: 'short' });
+      line.append(el('span', null, 'Rp ' + nf(s.last, 0)), el('span', 't-stock-chg ' + (chg > 0 ? 't-up' : chg < 0 ? 't-dn' : ''), sgn(chg, 1) + '%'), el('span', 't-stock-per', per));
+    } else line.append(el('span', 't-stock-per', s.unknown ? 'belum terdaftar' : 'harga belum terbaca'));
+    a.append(top, line);
+    // a nudge while the Sheet rows for a new stock are still empty
+    if (s.fund_total && s.fund_filled < s.fund_total) a.append(el('span', 't-stock-todo', 'Fundamental ' + s.fund_filled + '/' + s.fund_total + ' terisi'));
+    a.title = s.code + ' · ' + (s.sector === 'bank' ? 'Bank' : 'Emiten') + (s.last_date ? ' · penutupan ' + String(s.last_date).replace(/ .*/, '') : '') + ' · profil, valuasi, arus asing, dividen';
+    return a;
   }
+  function drawStocks() {
+    const list = STOCKS.slice();
+    const here = onStockPage && String(window.EO_TK).toUpperCase();
+    if (here && isCode(here) && !list.some((s) => s.code === here)) list.push({ code: here, name: here, unknown: true });
+    stockBox.replaceChildren(...list.map(card));
+    const dl = $('#t-cmd-list');
+    if (dl) dl.replaceChildren(...SECTIONS.map(([c, l]) => [c, l]).concat(STOCKS.map((x) => [x.code, 'Saham ' + x.name])).map(([c, l]) => { const o = el('option'); o.value = c; o.label = l; return o; }));
+  }
+  function loadStocks() {
+    fetch('/api/stocks', { cache: 'no-store' }).then((r) => r.json()).then((j) => { STOCKS = j.stocks || []; if (nav) drawStocks(); }).catch(() => {});
+  }
+  loadStocks();
+  window.addEventListener('eo:stocks', loadStocks);
+  window.addEventListener('eo:data', loadStocks);
   if (nav && onStockPage) {
     // stock page: other stocks, this stock's analyses (its tabs), and the way back
     stockGroup();
@@ -160,14 +180,18 @@
   // command bar
   const cmd = $('#t-cmd');
   if (cmd) {
-    $('#t-cmd-list').replaceChildren(...SECTIONS.concat(STOCKS.map(([c, l]) => [c, 'Saham ' + l])).map(([c, l]) => { const o = el('option'); o.value = c; o.label = l; return o; }));
+    $('#t-cmd-list').replaceChildren(...SECTIONS.map(([c, l]) => { const o = el('option'); o.value = c; o.label = l; return o; }));
     cmd.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') { cmd.value = ''; cmd.blur(); return; }
       if (e.key !== 'Enter') return;
       const q = cmd.value.trim().toLowerCase();
-      const stock = STOCKS.find(([c]) => c.toLowerCase() === q);
-      if (stock) { location.href = stockUrl(stock[0]); return; }
-      const hit = SECTIONS.find(([c]) => c.toLowerCase() === q)
+      const stock = STOCKS.find((x) => x.code.toLowerCase() === q);
+      if (stock) { location.href = stockUrl(stock.code); return; }
+      const exact = SECTIONS.find(([c]) => c.toLowerCase() === q);
+      // any other four-letter code is a stock, except the plain words the
+      // keyword search already understands (bank, coal, kurs, ...)
+      if (!exact && isCode(q) && !PLAIN_WORDS.has(q)) { location.href = stockUrl(q.toUpperCase()); return; }
+      const hit = exact
         || SECTIONS.find(([c, l]) => c.toLowerCase().startsWith(q) || l.toLowerCase().includes(q))
         || SECTIONS.find(([c]) => (KEYWORDS[c] || '').split(' ').some((w) => w.startsWith(q) || q.split(' ').includes(w)));
       if (hit) { go(hit[2]); cmd.value = ''; cmd.blur(); } else { cmd.classList.add('t-miss'); setTimeout(() => cmd.classList.remove('t-miss'), 600); }
@@ -305,7 +329,7 @@
     setTimeout(() => go(find), 50);
   }
   window.addEventListener('hashchange', () => { hashDone = false; jumpToHash(); });
-  function render() { try { stockPrices(); monitor(); signals(); spy(); } catch (e) { console.warn('terminal', e && e.message); } }
+  function render() { try { monitor(); signals(); spy(); } catch (e) { console.warn('terminal', e && e.message); } }
   window.addEventListener('eo:data', jumpToHash);
   dash.onData(render);
 })();

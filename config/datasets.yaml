@@ -42,6 +42,15 @@ spreadsheets:
   main: "1L5maHUBilVeH5Uf3IOKJ4A1dHLWr8IqeyXqHE-UbEyw"
   bmri: "1Oj0CbbXxoWlnUqvdeJMM0BEj3OvUreBvr3kMsPGYTIs"        # "BMRI prices (live)"
   bank_peers: "1K3q7sd97i9N5iatpSPp-w4NToFAMTapljOMYwq96ArA"  # "IDX bank peers prices (live)"
+  # Shared sheet for individual stocks (backend/stocks.py). Leave empty: the app
+  # creates "IEO Saham" in your Drive when you add the first stock and keeps its
+  # id in data/spreadsheets.local.json. Put an id here to use an existing sheet.
+  saham: ""
+
+# Stocks with their own spreadsheets, from before the shared Saham sheet.
+# Every other stock is a row in the Saham sheet's Daftar tab.
+stocks_legacy:
+  BMRI: {name: Bank Mandiri, sector: bank, peers: "BBCA, BBRI, BBNI", price: bmri_price, fund: bmri_fund}
 
 datasets:
 
@@ -466,3 +475,71 @@ datasets:
     group: stock
     frequency: "snapshot"
     release: "Laporan keuangan masing-masing bank; perbarui tiap rilis kuartalan"
+
+  # ---------------------------------------------------------------------------
+  # Individual stocks, shared sheet "IEO Saham" (see backend/stocks.py).
+  # Every tab starts with a Kode column; one price tab per stock is added by
+  # the app ("Harga <KODE>", a GOOGLEFINANCE formula).
+  saham_daftar:
+    title: Saham, daftar
+    description: Satu baris per saham yang dipantau - kode, nama, sektor (bank/umum) dan kode pembanding.
+    spreadsheet: saham
+    range: "'Daftar'!A2:E"
+    write: append
+    group: stock
+    frequency: "static"
+
+  saham_fund:
+    title: Saham, fundamental
+    description: Fundamental terakhir per saham, satu baris per angka (Kode, Kunci, Keterangan, Nilai, Satuan, Catatan).
+    spreadsheet: saham
+    range: "'Fundamental'!A2:F"
+    write: append
+    key: [0, 1]
+    value_col: 3
+    group: stock
+    frequency: "snapshot"
+    release: "Laporan keuangan emiten (BEI, situs hubungan investor); perbarui tiap rilis kuartalan"
+
+  saham_fh:
+    title: Saham, riwayat fundamental
+    description: Nilai buku, laba dan dividen per saham di setiap akhir tahun buku, per saham.
+    spreadsheet: saham
+    range: "'Riwayat fundamental'!A2:F"
+    write: append
+    key: [0, 1]
+    period_col: 1
+    value_col: 2
+    group: stock
+    frequency: "irregular"
+    stale_after_days: 400
+    release: "Laporan tahunan emiten"
+
+  saham_dv:
+    title: Saham, dividen
+    description: Setiap pembayaran dividen per saham (tanggal bayar, tahun buku, interim/final, per saham).
+    spreadsheet: saham
+    range: "'Dividen'!A2:F"
+    write: append
+    key: [0, 1, 3]
+    period_col: 1
+    value_col: 4
+    group: stock
+    frequency: "irregular"
+    stale_after_days: 400
+    release: "Keterbukaan informasi BEI dan pengumuman RUPS emiten"
+
+  saham_flow:
+    title: Saham, arus asing
+    description: Arus asing bersih per saham dan seluruh pasar (Kode PASAR), harian/mingguan, plus peristiwa.
+    spreadsheet: saham
+    range: "'Arus asing'!A2:I"
+    write: append
+    key: [0, 1, 2, 3]
+    period_col: 2
+    value_col: 4
+    group: stock
+    frequency: "irregular"
+    stale_after_days: 14
+    release: "Statistik BEI dan data yang dikutip media; tambahkan tiap pekan"
+

@@ -51,7 +51,7 @@
 .tab:focus-visible, .lab button:focus-visible, .lab select:focus-visible, .lab input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .winbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; padding: 8px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
-.lab select, .lab input[type=number] { font: inherit; font-size: 13px; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }
+.lab select, .lab input[type=number], .lab input[type=text] { font: inherit; font-size: 13px; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }
 .lab label { font-size: 13px; color: var(--muted); }
 .banner { padding: 10px 12px; border-radius: 10px; border: 1px dashed var(--warn); font-size: 13.5px; margin-bottom: 14px; }
 
@@ -124,3 +124,11 @@ details.more summary { cursor: pointer; font-weight: 600; font-size: 13.5px; }
   .tabs { display: flex; }
   .tab { flex: 1 1 auto; padding: 7px 8px; }
 }
+
+/* a stock that is not on the list yet: only the header and the add form */
+main.lab.adding > :not(.lab-head):not(#addStock) { display: none !important; }
+#addStock .assump input[type=text], #addStock select { width: 100%; box-sizing: border-box; }
+#addStock code, .gate code { font-family: var(--t-mono); font-size: 12px; background: var(--chip); padding: 1px 5px; border-radius: 5px; }
+/* a tab whose rows are not filled yet shows only its note */
+.gated { display: none !important; }
+.gate { border-style: solid; border-color: var(--line); background: var(--panel); line-height: 1.55; }
