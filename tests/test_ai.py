@@ -113,38 +113,195 @@ def test_missing_claude_code_is_explained(monkeypatch):
         ai.claude_bin()
 
 
+@pytest.fixture
+def chat_env(tmp_path):
+    from backend.config import AppConfig, Dataset, SheetRange
+    from backend.store import Store
+    st = Store(tmp_path / "store")
+    st.put("birate", header=["Periode", "BI Rate", "Unit", "Penerbit"], source="t",
+           values=[["Jul'26", "5.5", "%", "BI"], ["Agu'26", "5.75", "%", "BI"], ["Sep'26", "5.75", "%", "BI"]])
+    st.put("ikk", header=["Periode", "IKK"], source="t", values=[["Sep'26", "118.1"]])
+    cfg = AppConfig("x", {
+        "birate": Dataset("birate", "BI Rate bulanan", range=SheetRange.parse("'BI Rate'!A2:D")),
+        "ikk": Dataset("ikk", "Indeks Keyakinan Konsumen", range=SheetRange.parse("IKK!A2:B")),
+    })
+    return cfg, st
+
+
+def test_chat_sends_only_the_data_the_question_is_about(chat_env):
+    cfg, st = chat_env
+    seen = {}
+
+    def runner(prompt):
+        seen["prompt"] = prompt
+        return "BI Rate naik ke 5,75% pada Agu'26 (BI Rate bulanan) dan sekarang 6,25%."
+    out = ai.chat("Kenapa BI menaikkan suku bunga?", [{"q": "Halo", "a": "Hai"}], cfg=cfg, store=st,
+                  facts="PMI global 53.0", runner=runner)
+    assert out["used"] == ["Ringkasan fakta", "BI Rate bulanan"]           # "menaIKKan" does not pull in ikk
+    assert "Sep'26 | 5.75" in seen["prompt"] and "118.1" not in seen["prompt"]
+    assert "Pengguna: Halo" in seen["prompt"] and seen["prompt"].rstrip().endswith("Kenapa BI menaikkan suku bunga?")
+    assert out["unverified"] == ["6,25"]                                   # 5,75 is in the data, 6,25 is not
+
+
 @pytest.mark.skipif(os.name == "nt", reason="uses a POSIX script as the fake claude")
-def test_chat_runs_in_the_data_folder_and_resumes_the_conversation(tmp_path, monkeypatch):
-    store = tmp_path / "store"
-    store.mkdir()
-    (store / "datapackage.json").write_text("{}")
-    log = tmp_path / "calls.jsonl"
+def test_chat_is_one_turn_without_tools(chat_env, tmp_path, monkeypatch):
+    cfg, st = chat_env
+    log = tmp_path / "call.json"
     script = tmp_path / "claude"
     script.write_text(f"""#!{sys.executable}
 import json, os, sys
 prompt = sys.stdin.read()
-with open({str(log)!r}, "a") as f:
-    f.write(json.dumps({{"argv": sys.argv[1:], "cwd": os.getcwd(), "prompt": prompt}}) + "\\n")
-print(json.dumps({{"type": "assistant", "message": {{"content": [{{"type": "tool_use", "name": "Read", "input": {{"file_path": os.getcwd() + "/pmi.json"}}}}]}}}}))
-print(json.dumps({{"type": "result", "subtype": "success", "is_error": False, "result": "PMI **53,0** (Sep'26).", "session_id": "abc-123"}}))
+json.dump({{"argv": sys.argv[1:], "cwd": os.getcwd()}}, open({str(log)!r}, "w"))
+print(json.dumps({{"type": "result", "subtype": "success", "is_error": False, "result": "BI Rate 5,75% (Sep'26)."}}))
 """)
     script.chmod(script.stat().st_mode | stat.S_IEXEC)
     monkeypatch.setenv("CLAUDE_BIN", str(script))
-    from backend.jobs import Job
-    job = Job(id="1", kind="chat", title="t")
-    out = ai.chat("Bagaimana PMI?", None, progress=job, store_dir=store, facts="FAKTA X")
-    assert out == {"answer": "PMI **53,0** (Sep'26).", "session_id": "abc-123"}
-    assert any("pmi.json" in s["text"] for s in job.steps)
-    ai.chat("Dan bulan lalu?", "abc-123", store_dir=store)
-    first, second = [json.loads(l) for l in log.read_text().splitlines()]
-    assert os.path.realpath(first["cwd"]) == os.path.realpath(store)          # only the data folder is readable
-    assert "FAKTA X" in first["prompt"] and "--resume" not in first["argv"]
-    assert second["argv"][second["argv"].index("--resume") + 1] == "abc-123" and second["prompt"] == "Dan bulan lalu?"
-    deny = first["argv"][first["argv"].index("--disallowedTools") + 1]
-    assert "WebFetch" in deny and "Bash" in deny                              # nothing can leave the computer
+    out = ai.chat("BI rate sekarang?", None, cfg=cfg, store=st, facts="")
+    assert out["answer"] == "BI Rate 5,75% (Sep'26)." and out["unverified"] == []
+    call = json.loads(log.read_text())
+    argv = call["argv"]
+    assert argv[argv.index("--tools") + 1] == "" and "--system-prompt" in argv and "--model" in argv
+    assert "--resume" not in argv and "--no-session-persistence" in argv
+    assert os.path.realpath(call["cwd"]) != os.path.realpath(st.dir)      # an empty folder, not the data
+
+
+def test_chat_refuses_empty_and_huge_questions(chat_env):
+    cfg, st = chat_env
     with pytest.raises(ValueError):
-        ai.chat("x", "abc; rm -rf /", store_dir=store)
+        ai.chat("  ", cfg=cfg, store=st, facts="", runner=lambda p: "")
+    with pytest.raises(ValueError):
+        ai.chat("x" * 2001, cfg=cfg, store=st, facts="", runner=lambda p: "")
 
 
 def test_one_shot_runs_deny_local_files():
     assert {"Read", "Bash", "Glob", "Grep"} <= set(ai.NO_LOCAL)
+
+
+def test_chat_follow_up_keeps_the_stock_and_reads_suffixes():
+    from backend import chat_context
+    from backend.config import load_config
+    cfg = load_config()
+    q = "Lalu bagaimana arus asingnya?"
+    assert "flow" in chat_context.match_datasets(q, cfg, {"flow", "birate"})          # asingnya -> asing
+    assert chat_context.match_datasets("Kenapa BI menaikkan suku bunga?", cfg, {"ikk", "birate"}) == ["birate"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="uses a POSIX script as the fake claude")
+def test_chat_uses_the_chosen_model_and_refuses_others(chat_env, tmp_path, monkeypatch):
+    cfg, st = chat_env
+    log = tmp_path / "argv.json"
+    script = tmp_path / "claude"
+    script.write_text(f"""#!{sys.executable}
+import json, sys
+sys.stdin.read()
+json.dump(sys.argv[1:], open({str(log)!r}, "w"))
+print(json.dumps({{"type": "result", "subtype": "success", "is_error": False, "result": "ok"}}))
+""")
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("CLAUDE_BIN", str(script))
+    out = ai.chat("BI rate?", None, cfg=cfg, store=st, facts="", model="Opus")
+    argv = json.loads(log.read_text())
+    assert argv[argv.index("--model") + 1] == "opus" and out["model"] == "opus"
+    with pytest.raises(ValueError, match="tidak dikenal"):
+        ai.chat("BI rate?", None, cfg=cfg, store=st, facts="", model="gpt-x")
+
+
+# ---------------------------------------------------------------- speed
+@pytest.fixture(autouse=True)
+def _no_warm_leftovers():
+    yield
+    ai._stop_warm()
+
+
+def _streaming_claude(tmp_path, log):
+    """A fake `claude -p --input-format stream-json`: notes when it started,
+    waits for one user message, streams it back in two pieces."""
+    script = tmp_path / "claude"
+    script.write_text(f"""#!{sys.executable}
+import json, os, sys, time
+started = time.time()
+msg = json.loads(sys.stdin.readline())
+json.dump({{"argv": sys.argv[1:], "started": started, "got": time.time(), "msg": msg,
+           "thinking": [os.environ.get("MAX_THINKING_TOKENS"), os.environ.get("CLAUDE_CODE_DISABLE_THINKING")]}},
+          open({str(log)!r}, "w"))
+ev = lambda e: print(json.dumps({{"type": "stream_event", "event": e}}), flush=True)
+ev({{"type": "message_start", "message": {{"usage": {{"input_tokens": 10, "cache_read_input_tokens": 100}}}}}})
+for piece in ["BI Rate ", "5,75% (Sep'26)."]:
+    print(json.dumps({{"type": "stream_event", "event": {{"type": "content_block_delta", "delta": {{"type": "text_delta", "text": piece}}}}}}), flush=True)
+    time.sleep(0.15)
+ev({{"type": "message_delta", "usage": {{"output_tokens": 5}}}})
+ev({{"type": "message_stop"}})
+time.sleep(float(os.environ.get("FAKE_BOOKKEEPING", "0")))     # Claude Code's post-turn summary
+print(json.dumps({{"type": "result", "subtype": "success", "is_error": False, "result": "BI Rate 5,75% (Sep'26).",
+                  "usage": {{"input_tokens": 10, "output_tokens": 5}}}}))
+""")
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return str(script)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="uses a POSIX script as the fake claude")
+def test_chat_streams_the_answer_as_it_is_written(chat_env, tmp_path, monkeypatch):
+    cfg, st = chat_env
+    log = tmp_path / "call.json"
+    monkeypatch.setenv("CLAUDE_BIN", _streaming_claude(tmp_path, log))
+    from backend.jobs import Job
+    job = Job(id="1", kind="chat", title="t")
+    seen = []
+    real = job.partial
+    monkeypatch.setattr(job, "partial", lambda t: (seen.append(t), real(t)))
+    monkeypatch.setenv("FAKE_BOOKKEEPING", "5")
+    import time
+    t0 = time.time()
+    out = ai.chat("BI rate sekarang?", None, progress=job, cfg=cfg, store=st, facts="")
+    assert time.time() - t0 < 3                                                # done at message_stop, not at "result"
+    assert out["answer"] == "BI Rate 5,75% (Sep'26)." and out["unverified"] == [] and out["tokens"] == 115
+    assert seen[0] == "BI Rate " and seen[-1] == out["answer"] and job.view()["partial"] == out["answer"]
+    call = json.loads(log.read_text())
+    assert call["msg"]["type"] == "user" and call["msg"]["message"]["content"].rstrip().endswith("BI rate sekarang?")
+    assert call["thinking"] == ["0", "1"]                                      # no thinking for the chat
+    argv = call["argv"]
+    assert argv[argv.index("--input-format") + 1] == "stream-json" and "--include-partial-messages" in argv
+    assert argv[argv.index("--tools") + 1] == ""
+
+
+@pytest.mark.skipif(os.name == "nt", reason="uses a POSIX script as the fake claude")
+def test_a_warmed_process_is_used_and_replaced(chat_env, tmp_path, monkeypatch):
+    cfg, st = chat_env
+    log = tmp_path / "call.json"
+    monkeypatch.setenv("CLAUDE_BIN", _streaming_claude(tmp_path, log))
+    assert ai.warm("haiku") and not ai.warm("gpt-x")
+    first = ai._warm["haiku"][0]
+    import time
+    time.sleep(0.5)
+    ai.chat("BI rate?", None, cfg=cfg, store=st, facts="", model="haiku")
+    call = json.loads(log.read_text())
+    assert call["got"] - call["started"] >= 0.4                     # it was started before the question
+    for _ in range(50):                                             # a fresh one is waiting for the next question
+        if "haiku" in ai._warm:
+            break
+        time.sleep(0.05)
+    assert ai._warm["haiku"][0] is not first and first.poll() is not None
+
+
+@pytest.mark.skipif(os.name == "nt", reason="uses a POSIX script as the fake claude")
+def test_a_warm_process_from_another_claude_is_not_used(chat_env, tmp_path, monkeypatch):
+    cfg, st = chat_env
+    (tmp_path / "a").mkdir(); (tmp_path / "b").mkdir()
+    monkeypatch.setenv("CLAUDE_BIN", _streaming_claude(tmp_path / "a", tmp_path / "a.json"))
+    ai.warm("haiku")
+    monkeypatch.setenv("CLAUDE_BIN", _streaming_claude(tmp_path / "b", tmp_path / "b.json"))
+    ai.chat("BI rate?", None, cfg=cfg, store=st, facts="", model="haiku")
+    assert (tmp_path / "b.json").exists() and not (tmp_path / "a.json").exists()
+
+
+def test_the_fact_sheet_is_cached_until_the_data_changes(chat_env, monkeypatch):
+    from backend import chat_context
+    cfg, st = chat_env
+    sys.path.insert(0, str(chat_context.ROOT / "scripts"))
+    import insights as ins
+    calls = []
+    monkeypatch.setattr(ins, "digest_text", lambda: calls.append(1) or f"fakta {len(calls)}")
+    chat_context._FACTS.clear()
+    assert chat_context._facts(st) == "fakta 1" and chat_context._facts(st) == "fakta 1"
+    st.put("ikk", header=["Periode", "IKK"], source="t", values=[["Okt'26", "120.0"]])     # rewrites the index
+    assert chat_context._facts(st) == "fakta 2" and len(calls) == 2

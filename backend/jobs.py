@@ -31,6 +31,9 @@ class Progress:
     def warn(self, text: str) -> None:
         """Something was skipped, but the job carries on."""
 
+    def partial(self, text: str) -> None:
+        """Text so far, for work that streams (the chat's answer)."""
+
 
 NO_PROGRESS = Progress()
 
@@ -47,6 +50,7 @@ class Job(Progress):
     total: int = 0
     result: Any = None
     error: str | None = None
+    text: str = ""          # streamed text so far (partial())
     started: float = field(default_factory=time.time)
     finished: float | None = None
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
@@ -65,6 +69,10 @@ class Job(Progress):
     def warn(self, text: str) -> None:
         with self._lock:
             self.warnings.append(text)
+
+    def partial(self, text: str) -> None:
+        with self._lock:
+            self.text = text
 
     def view(self) -> dict:
         with self._lock:
@@ -85,6 +93,7 @@ class Job(Progress):
                 "warnings": list(self.warnings),
                 "result": self.result,
                 "error": self.error,
+                "partial": self.text,
             }
 
 

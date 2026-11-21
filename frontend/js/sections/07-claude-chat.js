@@ -1,15 +1,30 @@
 /*
- * "Tanya Claude" chat, under the insight panel. Each question runs Claude Code
- * on this computer (POST /api/chat, backend/ai.py: chat) inside the data
- * folder, so it answers from the dashboard's own data. Later questions resume
- * the same Claude Code conversation (session id), so it remembers the thread.
+ * "Tanya Claude" chat, under the insight panel (POST /api/chat).
+ * The backend picks the data the question is about (backend/chat_context.py),
+ * Claude Code answers in one turn without tools, and every number in the
+ * answer is checked against that data: numbers it can't find are listed
+ * under the answer. The last three exchanges go along, so follow-ups work.
+ *
+ * Speed: the server keeps a Claude Code process waiting per model (warmed when
+ * the chat is shown and when the model is switched), and the answer streams in
+ * as it is written: the job is polled every 200 ms and its partial text shown.
  *
  * The conversation is kept in sessionStorage (this tab only). Answers are
  * escaped first and then given a little Markdown (bold, code, lists,
  * headings), so nothing in an answer can inject HTML.
  */
 (function () {
-  const KEY = 'eo-chat-v1';
+  const KEY = 'eo-chat-v2';
+  // The model switch: Haiku answers fast and cheap; Sonnet and Opus reason more carefully, slower.
+  const MODELS = [
+    ['haiku', 'Haiku', 'Cepat dan paling hemat (jawaban selesai ±3–9 dtk). Cukup untuk sebagian besar pertanyaan.'],
+    ['sonnet', 'Sonnet', 'Lebih teliti merangkai beberapa data; sedikit lebih lambat.'],
+    ['opus', 'Opus', 'Paling teliti untuk pertanyaan yang rumit; paling lambat dan paling banyak memakai kuota.'],
+  ];
+  const MKEY = 'eo-chat-model';
+  let model = 'haiku';
+  try { model = localStorage.getItem(MKEY) || 'haiku'; } catch (e) { /* private mode */ }
+  if (!MODELS.some((m) => m[0] === model)) model = 'haiku';
   const SUGGEST = [
     'Kenapa IHSG tertinggal dari bursa Asia tahun ini?',
     'Apa arti kenaikan BI Rate untuk saham bank?',
@@ -18,7 +33,7 @@
   const $ = (s, r) => (r || document).querySelector(s);
   const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
 
-  let state = { session: null, msgs: [] };
+  let state = { msgs: [] };
   try { state = JSON.parse(sessionStorage.getItem(KEY)) || state; } catch (e) { /* private mode */ }
   const save = () => { try { sessionStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { /* ignore */ } };
 
@@ -46,24 +61,43 @@
   // --- view --------------------------------------------------------------------
   function bubble(m) {
     const b = el('div', 'eo-chat-msg ' + (m.role === 'user' ? 'me' : m.error ? 'err' : 'ai'));
-    if (m.role === 'user') b.textContent = m.text;
-    else { b.innerHTML = md(m.text); }   // safe: md() escapes before adding tags
+    if (m.role === 'user') { b.textContent = m.text; return b; }
+    b.innerHTML = md(m.text);   // safe: md() escapes before adding tags
+    if (m.used && m.used.length) {
+      const label = (MODELS.find((x) => x[0] === m.model) || [])[1];
+      b.append(el('div', 'eo-chat-used', (label ? 'Claude ' + label + ' · ' : '') + 'Data: ' + m.used.join(' · ')));
+    }
+    if (m.unverified && m.unverified.length) {
+      b.append(el('div', 'eo-chat-warn', '⚠ Angka tidak ditemukan di data yang dikirim: ' + m.unverified.join(', ') + '. Cek sebelum dipakai.'));
+    }
     return b;
   }
+  // the last three question/answer pairs, for follow-up questions
+  function history() {
+    const out = [];
+    for (let i = 0; i + 1 < state.msgs.length; i++) {
+      const u = state.msgs[i], a = state.msgs[i + 1];
+      if (u.role === 'user' && a.role === 'ai' && !a.error) out.push({ q: u.text, a: a.text });
+    }
+    return out.slice(-3);
+  }
 
-  function render(busyText) {
+  function render(busyText, partial) {
     const box = document.getElementById('eo-chat-body'); if (!box) return;
     const log = $('#eo-chat-log', box);
     log.replaceChildren(...state.msgs.map(bubble));
     if (!state.msgs.length) {
       const intro = el('div', 'eo-chat-empty');
-      intro.append(el('p', null, 'Tanya apa saja tentang data di dashboard ini. Claude membaca file data (JSON) yang sama dengan yang Anda lihat dan menyebut dataset serta periodenya.'));
+      intro.append(el('p', null, 'Tanya apa saja tentang data di dashboard ini. Aplikasi memilih data yang relevan, Claude menjawab dari data itu saja, lalu setiap angkanya dicek.'));
       const chips = el('div', 'eo-chat-chips');
       SUGGEST.forEach((q) => { const c = el('button', 'eo-chat-chip', q); c.type = 'button'; c.addEventListener('click', () => ask(q)); chips.append(c); });
       intro.append(chips);
       log.append(intro);
     }
-    if (busyText) log.append(el('div', 'eo-chat-msg ai busy', busyText));
+    if (partial) {
+      const b = el('div', 'eo-chat-msg ai streaming'); b.innerHTML = md(partial);   // safe: md() escapes
+      log.append(b);
+    } else if (busyText) log.append(el('div', 'eo-chat-msg ai busy', busyText));
     $('#eo-chat-new', box).hidden = !state.msgs.length;
     log.scrollTop = log.scrollHeight;
   }
@@ -75,12 +109,21 @@
     busy = true;
     const input = $('#eo-chat-input'), send = $('#eo-chat-send');
     input.value = ''; autosize(input); send.disabled = true;
+    const hist = history();
     state.msgs.push({ role: 'user', text: q }); save();
-    render('Claude sedang membaca data…');
+    render('Claude sedang menjawab…');
     try {
-      const out = await EOJobs.run('/api/chat', { question: q, session_id: state.session });
-      state.session = out.result.session_id || state.session;
-      state.msgs.push({ role: 'ai', text: out.result.answer || '(tanpa jawaban)' });
+      // follow the job ourselves (not EOJobs.run): faster polling, and the partial text is shown
+      let job = await EOJobs.api('POST', '/api/chat', { question: q, history: hist, model });
+      let shown = '';
+      while (job.state === 'running') {
+        await new Promise((r) => setTimeout(r, 200));
+        job = await EOJobs.api('GET', '/api/jobs/' + job.id);
+        if (job.partial && job.partial !== shown) { shown = job.partial; render(null, shown); }
+      }
+      if (job.state === 'error') throw new Error(job.error);
+      const r = job.result || {};
+      state.msgs.push({ role: 'ai', text: r.answer || '(tanpa jawaban)', used: r.used || [], unverified: r.unverified || [], model: r.model });
     } catch (e) {
       state.msgs.push({ role: 'ai', error: true, text: e.message });
     }
@@ -102,13 +145,30 @@
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); ask(input.value); } });
     input.addEventListener('input', () => autosize(input));
     const head = el('div', 'eo-chat-head');
-    head.append(el('span', 'eo-chat-note', 'Dijalankan lewat Claude Code di komputer ini · hanya membaca folder data · bacaan data, bukan rekomendasi investasi'));
+    head.append(el('span', 'eo-chat-note', 'Claude Code di komputer ini · menjawab hanya dari data dashboard · bacaan data, bukan rekomendasi investasi'));
     const fresh = el('button', 'adm-btn eo-chat-newbtn', 'Percakapan baru'); fresh.id = 'eo-chat-new'; fresh.type = 'button';
-    fresh.addEventListener('click', () => { state = { session: null, msgs: [] }; save(); render(); input.focus(); });
-    head.append(fresh);
+    fresh.addEventListener('click', () => { state = { msgs: [] }; save(); render(); input.focus(); });
+    // model switch (a segmented control, remembered in this browser)
+    const sw = el('div', 'eo-chat-models'); sw.setAttribute('role', 'radiogroup'); sw.setAttribute('aria-label', 'Model Claude');
+    MODELS.forEach(([id, label, hint]) => {
+      const bt = el('button', 'eo-chat-model', label); bt.type = 'button'; bt.title = hint;
+      bt.setAttribute('role', 'radio'); bt.setAttribute('aria-checked', String(id === model));
+      bt.addEventListener('click', () => {
+        model = id;
+        try { localStorage.setItem(MKEY, id); } catch (e) { /* ignore */ }
+        sw.querySelectorAll('.eo-chat-model').forEach((x) => x.setAttribute('aria-checked', String(x === bt)));
+        warm();
+      });
+      sw.append(bt);
+    });
+    const right = el('div', 'eo-chat-tools'); right.append(sw, fresh);
+    head.append(right);
     box.replaceChildren(head, el('div', 'eo-chat-log'), form);
     $('.eo-chat-log', box).id = 'eo-chat-log';
     render();
+    warm();
   }
+  // have a Claude Code process for the chosen model ready before the first question (uses no tokens)
+  function warm() { EOJobs.api('POST', '/api/chat/warm', { model }).catch(() => { /* no Claude Code: the answer says why */ }); }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount); else mount();
 })();

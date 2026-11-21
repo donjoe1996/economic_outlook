@@ -19,6 +19,7 @@ so a button can never run commands or edit files.
 """
 from __future__ import annotations
 
+import atexit
 import json
 import os
 import shutil
@@ -26,6 +27,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from datetime import date
 from pathlib import Path
 
@@ -273,45 +275,201 @@ def proposal_rows(code: str, proposal: dict) -> dict[str, list[list[str]]]:
 
 
 # ======================================================================= chat
-CHAT_RULES = """You are the analyst inside an Indonesian economic dashboard, talking with its one user, an investor who wants to understand, not to be told what to buy.
-Answer in Indonesian. Start from the big picture, then narrow down to the answer; explain the reasoning so the user learns to read the data themselves.
-Your working folder holds the dashboard's data: one JSON file per dataset (a schema with column names and types, then rows as arrays), and datapackage.json lists every dataset with its title and row count. Read the files you need; do not guess numbers.
-When you quote a number, say which dataset and period it comes from. If the data needed is missing or old, say so plainly.
-Correlation is not causation. No buy or sell recommendations. Keep answers short unless the user asks for depth; use short paragraphs and bullet lists, no tables wider than 4 columns."""
+CHAT_RULES = """Anda analis di dalam dashboard ekonomi Indonesia, berbicara dengan satu pengguna: investor yang ingin memahami, bukan diberi tahu apa yang harus dibeli.
+Jawab dalam bahasa Indonesia, singkat: maksimal 120 kata kecuali pengguna minta detail. Mulai dari gambaran besar, lalu ke jawabannya; tunjukkan alasannya supaya pengguna belajar membaca datanya sendiri.
+Pakai HANYA angka yang ada di FAKTA dan DATA TERKAIT di bawah. Jangan menghitung angka baru dan jangan memakai pengetahuan umum untuk angka. Setiap angka disertai dataset dan periodenya.
+Bila data yang dibutuhkan tidak ada atau sudah lama, katakan terus terang.
+Korelasi bukan sebab-akibat. Tidak ada rekomendasi beli atau jual. Paragraf pendek dan daftar berpoin; tanpa tabel."""
 
-# The chat may only read the data folder it runs in; everything else is refused
-# (dontAsk), and it has no web access, so nothing it reads can leave this computer.
-CHAT_DENY = ("Bash", "Write", "Edit", "NotebookEdit", "WebFetch", "WebSearch", "Task", "Agent")
+# The chat's model, chosen per question on the page. Claude Code resolves the
+# alias to the latest model of that family. Haiku is the default: fast and cheap;
+# Sonnet and Opus reason more carefully and take longer. IEO_CHAT_MODEL sets the default.
+CHAT_MODELS = ("haiku", "sonnet", "opus")
+CHAT_MODEL = os.environ.get("IEO_CHAT_MODEL", "haiku") if os.environ.get("IEO_CHAT_MODEL", "haiku") in CHAT_MODELS else "haiku"
 
 
-def chat(question: str, session_id: str | None, progress: Progress = NO_PROGRESS, store_dir: Path | None = None,
-         facts: str | None = None, runner=None) -> dict:
-    """One turn of the dashboard chat. The first turn includes the fact sheet;
-    later turns resume the same Claude Code conversation by session id."""
+# ---------------------------------------------------------------- speed
+# Starting Claude Code costs ~2-4 s before the model even sees the question.
+# So one process per model is started ahead of time, waiting (streaming JSON
+# input) with no tokens used, and replaced right after it is used. Thinking is
+# capped for the chat: the data work is already done in Python.
+# No thinking for the chat: the data work is done in Python, and thinking was
+# up to 5 s before the first word. (Older Claude Code versions read only the
+# token cap; unknown variables are ignored.)
+CHAT_ENV = {"CLAUDE_CODE_DISABLE_THINKING": "1", "CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING": "1", "MAX_THINKING_TOKENS": "0"}
+WARM_MAX_AGE = 600          # seconds a waiting process is kept before it is replaced
+_warm: dict[str, tuple] = {}   # model -> (process, started, folder, command)
+_warm_lock = threading.Lock()
+
+
+def _chat_cmd(model: str) -> list[str]:
+    return [claude_bin(), "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+            "--include-partial-messages", "--no-session-persistence", "--permission-mode", "dontAsk",
+            "--settings", '{"alwaysThinkingEnabled": false}',
+            "--system-prompt", CHAT_RULES, "--tools", "", "--model", model]
+
+
+def _spawn(model: str) -> tuple:
+    cmd = _chat_cmd(model)
+    cwd = tempfile.mkdtemp(prefix="ieo-chat-")          # empty: the chat has no tools anyway
+    env = dict(os.environ, **CHAT_ENV)
+    try:
+        proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+    except OSError:
+        shutil.rmtree(cwd, ignore_errors=True)
+        raise
+    return proc, time.time(), cwd, cmd
+
+
+def _usable(entry, model: str) -> bool:
+    """Still running, not too old, and started with today's command (same
+    claude, same rules)."""
+    try:
+        cmd = _chat_cmd(model)
+    except AIUnavailable:
+        return False
+    return entry[0].poll() is None and time.time() - entry[1] < WARM_MAX_AGE and entry[3] == cmd
+
+
+def _discard(entry) -> None:
+    proc, _, cwd, _ = entry
+    if proc.poll() is None:
+        proc.kill()
+        try:
+            proc.wait(timeout=3)         # reap it: no zombies left behind
+        except subprocess.TimeoutExpired:
+            pass
+    shutil.rmtree(cwd, ignore_errors=True)
+
+
+def warm(model: str) -> bool:
+    """Have a Claude Code process for this model ready (called when the chat is shown)."""
+    if model not in CHAT_MODELS:
+        return False
+    with _warm_lock:
+        entry = _warm.get(model)
+        if entry and _usable(entry, model):
+            return True
+        if entry:
+            _discard(entry)
+        try:
+            _warm[model] = _spawn(model)
+        except (OSError, AIUnavailable):
+            _warm.pop(model, None)
+            return False
+    return True
+
+
+def _take(model: str) -> tuple:
+    with _warm_lock:
+        entry = _warm.pop(model, None)
+    if entry and _usable(entry, model):
+        return entry
+    if entry:
+        _discard(entry)
+    try:
+        return _spawn(model)
+    except OSError as exc:
+        raise AIUnavailable(f"Claude Code tidak bisa dijalankan: {exc}") from None
+
+
+@atexit.register
+def _stop_warm() -> None:
+    with _warm_lock:
+        for entry in _warm.values():
+            _discard(entry)
+        _warm.clear()
+
+
+def _chat_stream(model: str, prompt: str, progress: Progress, timeout: int = 300) -> dict:
+    """Send the prompt to a (pre-started) process, stream the answer into
+    progress.partial(), and return {"result": answer, "usage": tokens}.
+
+    The answer is complete at the model's message_stop. Claude Code may then
+    spend a few more seconds on its own bookkeeping (a post-turn summary)
+    before its "result" event, so the process is not waited for."""
+    entry = _take(model)
+    threading.Thread(target=warm, args=(model,), daemon=True).start()   # the next question's process
+    proc = entry[0]
+    timer = threading.Timer(timeout, proc.kill)
+    timer.start()
+    result, text, last_push, usage, finished = None, "", 0.0, {}, False
+    try:
+        proc.stdin.write(json.dumps({"type": "user", "message": {"role": "user", "content": prompt}}) + "\n")
+        proc.stdin.close()
+        for line in proc.stdout:
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            if ev.get("type") == "stream_event":
+                se = ev.get("event") or {}
+                d = se.get("delta") or {}
+                if d.get("type") == "text_delta":
+                    text += d.get("text", "")
+                    if time.time() - last_push > 0.12:
+                        progress.partial(text)
+                        last_push = time.time()
+                elif se.get("type") == "message_start":
+                    usage.update(((se.get("message") or {}).get("usage")) or {})
+                elif se.get("type") == "message_delta":
+                    usage.update({k: v for k, v in (se.get("usage") or {}).items() if v is not None})
+                elif se.get("type") == "message_stop" and text.strip():
+                    finished = True
+                    break                    # the answer is complete; don't wait for the bookkeeping
+            elif ev.get("type") == "result":
+                result = ev
+                break
+    finally:
+        timer.cancel()
+        _discard(entry)
+    if finished:
+        progress.partial(text)
+        return {"result": text, "usage": usage}
+    if result is None:
+        err = (proc.stderr.read() or "").strip() if proc.stderr else ""
+        raise RuntimeError("Claude Code berhenti tanpa jawaban. " + err[:300])
+    if result.get("is_error") or result.get("subtype") != "success":
+        msg = str(result.get("result") or result.get("subtype"))
+        if any(w in msg.lower() for w in ("login", "api key", "authenticat", "/login")):
+            raise AIUnavailable("Claude Code belum login di komputer ini. Jalankan 'claude' sekali di terminal, login, "
+                                "lalu coba lagi. (" + msg[:160] + ")")
+        raise RuntimeError("Claude Code gagal: " + msg[:300])
+    progress.partial(str(result.get("result") or text))
+    return {"result": result.get("result") or text, "usage": result.get("usage") or usage}
+
+
+def chat(question: str, history: list[dict] | None = None, progress: Progress = NO_PROGRESS,
+         cfg=None, store=None, facts: str | None = None, runner=None, model: str | None = None) -> dict:
+    """One chat turn: Python picks the data, Claude Code answers in one go
+    (no tools, short system prompt), Python checks the numbers."""
+    from . import chat_context
+    from .config import load_config
+    from .store import Store
+
     question = (question or "").strip()
     if not question:
         raise ValueError("Pertanyaannya kosong.")
-    if runner is not None:
-        return runner(question, session_id)
-    from .config import STORE_DIR
-
-    cwd = store_dir or STORE_DIR
-    if not (cwd / "datapackage.json").exists():
+    if len(question) > 2000:
+        raise ValueError("Pertanyaannya terlalu panjang (maks. 2000 karakter).")
+    model = (model or CHAT_MODEL).strip().lower()
+    if model not in CHAT_MODELS:
+        raise ValueError(f"Model '{model}' tidak dikenal; pilih {', '.join(CHAT_MODELS)}.")
+    cfg = cfg or load_config()
+    store = store or Store()
+    if not store.ids():
         raise AIUnavailable("Belum ada data di penyimpanan (data/store). Klik ⟳ Tarik dulu.")
-    args = ["--disallowedTools", " ".join(CHAT_DENY), "--append-system-prompt", CHAT_RULES]
-    if session_id:
-        if not all(c.isalnum() or c == "-" for c in session_id):
-            raise ValueError("session id tidak sah")
-        args += ["--resume", session_id]
-        prompt = question
+    progress.step("Memilih data yang relevan")
+    pack = chat_context.build(question, cfg, store, history, facts=facts)
+    progress.step(f"Claude {model.capitalize()} menjawab dari: " + ", ".join(pack["used"]))
+    if runner is not None:
+        answer = runner(pack["prompt"])
     else:
-        if facts is None:
-            sys.path.insert(0, str(ROOT / "scripts"))
-            import insights as ins  # scripts/insights.py
-            facts = ins.digest_text()
-        prompt = ("Ringkasan fakta yang sudah dihitung dari data (pakai sebagai titik awal; baca file JSON "
-                  "di folder ini untuk detail):\n\n" + facts + "\n\nPERTANYAAN:\n" + question)
-    progress.step("Claude sedang membaca data dan menyusun jawaban")
-    result = _run(args, prompt, cwd, progress, timeout=600, show=("Read",))
-    return {"answer": str(result.get("result") or "").strip(), "session_id": result.get("session_id")}
-
+        result = _chat_stream(model, pack["prompt"], progress)
+        answer = str(result.get("result") or "").strip()
+        u = result.get("usage") or {}
+        tokens = sum(int(u.get(k) or 0) for k in ("input_tokens", "cache_creation_input_tokens",
+                                                 "cache_read_input_tokens", "output_tokens"))
+    return {"answer": answer, "used": pack["used"], "model": model, "tokens": tokens if runner is None else None,
+            "unverified": chat_context.unverified_numbers(answer, pack["context"], question)}
