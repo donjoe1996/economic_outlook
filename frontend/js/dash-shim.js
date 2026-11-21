@@ -84,12 +84,29 @@
     listeners.slice().forEach((fn) => { try { fn(); } catch (e) { console.error('onData', e); } });
   }
 
-  function load() {
-    return fetch('/api/data', { cache: 'no-store' })
-      .then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-      .then((j) => { sources = j.datasets; loadError = null; window.EO_META = { sheet_url: j.sheet_url, google: j.google, datasets: j.datasets }; })
-      .catch((e) => { loadError = 'Server tidak bisa dihubungi (' + e.message + ')'; })
-      .then(() => { notify(); window.dispatchEvent(new CustomEvent('eo:data')); });
+  // Tell the toolbar which loading phase we're in (shown in its status line).
+  function phase(text) { window.dispatchEvent(new CustomEvent('eo:phase', { detail: text })); }
+  // Let the browser paint the phase text before the heavy, blocking drawing.
+  const nextPaint = () => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
+
+  async function load() {
+    const t0 = performance.now();
+    phase('Membaca salinan lokal dari server…');
+    try {
+      const r = await fetch('/api/data', { cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json();
+      sources = j.datasets; loadError = null;
+      window.EO_META = { sheet_url: j.sheet_url, google: j.google, datasets: j.datasets };
+      const n = Object.values(j.datasets).filter((d) => d.status === 'ok').length;
+      phase('Menggambar grafik dari ' + n + ' dataset…');
+    } catch (e) {
+      loadError = 'Server tidak bisa dihubungi (' + e.message + ')';
+    }
+    await nextPaint();
+    notify();
+    window.EO_META.load_ms = Math.round(performance.now() - t0);
+    window.dispatchEvent(new CustomEvent('eo:data'));
   }
 
   const dash = {

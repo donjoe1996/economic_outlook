@@ -11,6 +11,7 @@
 <body>
 
 <!-- ======================= Toolbar (js/admin.js) ======================= -->
+<header class="adm-top">
 <div class="adm-bar" role="toolbar" aria-label="Data">
   <span class="adm-pill warn" id="adm-google">Google: …</span>
   <span class="adm-grow" id="adm-status">Memuat data…</span>
@@ -19,8 +20,30 @@
   <button class="adm-btn" id="adm-add" title="Tambah periode baru atau isi sel kosong, langsung ke Google Sheet">Tambah / perbarui data</button>
   <button class="adm-btn" id="adm-auto" title="Cek sumber resmi (FRED) untuk periode baru">Cek data baru otomatis</button>
   <button class="adm-btn" id="adm-sources">Sumber data</button>
+  <button class="adm-btn" id="adm-activity" title="Apa yang sedang/telah dikerjakan aplikasi">Aktivitas</button>
   <a class="adm-btn" id="adm-sheet" href="#" target="_blank" rel="noopener">Buka Sheet ↗</a>
 </div>
+
+<!-- Progress of the running job (js/admin.js: runJob) -->
+<div class="adm-prog" id="adm-prog" hidden role="status" aria-live="polite">
+  <div class="adm-prog-head">
+    <b id="adm-prog-title"></b>
+    <span class="adm-prog-meta" id="adm-prog-meta"></span>
+    <button type="button" class="adm-link" id="adm-prog-toggle">Rincian</button>
+    <button type="button" class="adm-link" id="adm-prog-close" aria-label="Tutup">✕</button>
+  </div>
+  <div class="adm-prog-track"><div class="adm-prog-bar" id="adm-prog-bar"></div></div>
+  <div class="adm-prog-now" id="adm-prog-now"></div>
+  <ol class="adm-steps" id="adm-prog-steps" hidden></ol>
+</div>
+</header>
+
+<dialog class="adm-dlg" id="adm-act-dlg">
+  <h2>Aktivitas</h2>
+  <p class="adm-help">Pekerjaan terakhir sejak server dimulai, dengan tiap langkah dan lamanya.</p>
+  <div id="adm-act"></div>
+  <div class="adm-actions"><button type="button" class="adm-btn" data-close>Tutup</button></div>
+</dialog>
 
 <dialog class="adm-dlg" id="adm-form-dlg">
   <form id="adm-form">
@@ -94,7 +117,7 @@
 <div class="eo-map-detail eo-map-right" id="eo-map-detail" aria-live="polite"></div>
 </div>
 <div class="eo-map-ins eo-map-ins-wide"><h3 class="eo-nar-title">Insight koneksi dari data 12 bulan</h3><ol id="eo-map-insights"></ol></div>
-<div class="eo-map-note">Koordinat mitra dagang dibaca dari tab "Perdagangan per Mitra" (kolom bujur/lintang); salinan GeoJSON di Google Drive: <a href="https://drive.google.com/file/d/1Dr9rA_1eWCjUcQmV9bXGxNbUxGUX2DH3/view" target="_blank" rel="noopener">koneksi-global-as-indonesia-v3.geojson</a>. Semua angka pada peta dibaca langsung dari spreadsheet.</div>
+<div class="eo-map-note">Koordinat mitra dagang dibaca dari tab "Perdagangan per Mitra" (kolom bujur/lintang); salinan GeoJSON di Google Drive: <a href="https://drive.google.com/file/d/1Dr9rA_1eWCjUcQmV9bXGxNbUxGUX2DH3/view" target="_blank" rel="noopener">koneksi-global-as-indonesia-v3.geojson</a>. Semua angka pada peta dibaca langsung dari spreadsheet. Batas negara: Natural Earth 1:50m (domain publik).</div>
 </section>
 <section class="eo-panel" id="eo-global">
 <h2 class="eo-panel-title"><span class="eo-layer">1 · Dunia</span> Status ekonomi global <span class="eo-chart-hint">dinilai dari J.P. Morgan Global Manufacturing PMI, satu angka yang merangkum pabrik di seluruh dunia</span></h2>
@@ -435,7 +458,7 @@
 </div>
 </section>
 <section class="eo-panel" id="eo-kredit">
-<h2 class="eo-panel-title"><span class="eo-layer">8 · Kredit</span> Peta kredit bank per provinsi <span class="eo-chart-hint">ukuran lingkaran = posisi kredit · warna = pertumbuhan YoY dibanding rata-rata nasional · ◆ = daerah penghasil komoditas</span></h2>
+<h2 class="eo-panel-title"><span class="eo-layer">8 · Kredit</span> Peta kredit bank per provinsi <span class="eo-chart-hint">ukuran lingkaran = posisi kredit · warna provinsi dan lingkaran = pertumbuhan YoY dibanding rata-rata nasional · ◆ = daerah penghasil komoditas</span></h2>
 <div class="eo-map-chips" id="eo-kr-chips" role="group" aria-label="Pilih jenis kredit"></div>
 <div class="eo-map-box" id="eo-kr-box"><svg id="eo-kr-svg" class="eo-svg" role="img" aria-label="Peta Indonesia dengan lingkaran kredit per provinsi"></svg><div class="eo-tooltip" id="eo-kr-tip"></div></div>
 <div class="eo-map-leg" id="eo-kr-leg" style="margin-top:6px"></div>
@@ -444,7 +467,7 @@
 <div class="eo-map-ins"><h3 class="eo-nar-title">Insight kredit daerah</h3><ol id="eo-kr-ins"></ol></div>
 </div>
 <div class="eo-conf">Kepercayaan data (Kredit per provinsi): <b class="eo-conf-badge" data-source="confidence" data-where="id=kredit" data-field="label">—</b> <span class="eo-conf-detail" data-source="confidence" data-where="id=kredit" data-field="detail">—</span></div>
-<div class="eo-rg-rule">Sumber: SEKDA Bank Indonesia tabel II.7 (kredit menurut lapangan usaha, lokasi proyek), Agu 2025 vs Agu 2026; angka Agu 2026 sangat sementara. Titik lingkaran = titik tengah perkiraan provinsi.</div>
+<div class="eo-rg-rule">Sumber: SEKDA Bank Indonesia tabel II.7 (kredit menurut lapangan usaha, lokasi proyek), Agu 2025 vs Agu 2026; angka Agu 2026 sangat sementara. Lingkaran di titik dari Sheet bila jatuh di dalam provinsinya, kalau tidak di pulau terdekat provinsi itu. Batas provinsi: geoBoundaries (William &amp; Mary geoLab), data © kontributor OpenStreetMap, ODbL; negara tetangga: Natural Earth. Proyeksi Mercator.</div>
 </section>
 <section class="eo-panel" id="eo-market">
 <h2 class="eo-panel-title"><span class="eo-layer">9 · Pasar saham</span> Bagaimana harga saham merespons semua lapisan di atas <span class="eo-chart-hint">IHSG, indeks sektor keuangan, dan 4 bank besar · penutupan akhir bulan</span></h2>
@@ -619,9 +642,11 @@
 
 <!-- Order matters: d3 and dash first, then data (loaders), then drawings. -->
 <script src="vendor/d3.min.js"></script>
+<script src="vendor/topojson-client.min.js"></script>
 <script src="js/dash-shim.js"></script>
 <script src="js/admin.js"></script>
 <script src="js/data/loaders.js"></script>
+<script src="js/data/geo.js"></script>
 <script src="js/sections/01-core.js"></script>
 <script src="js/sections/02-folding.js"></script>
 <script src="js/sections/03-questions.js"></script>

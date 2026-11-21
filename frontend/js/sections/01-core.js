@@ -1173,7 +1173,7 @@ const svg = d3.select('#eo-map-svg'); const asiaV = eoSel === 'asia', W = box.cl
 svg.attr('viewBox', '0 0 ' + W + ' ' + H).attr('height', H).style('height', H + 'px').selectAll('*').remove();
 const pf = d3.geoNaturalEarth1 || d3.geoEqualEarth || d3.geoEquirectangular || d3.geoMercator;
 let proj, path;
-if (pf && d3.geoPath) { proj = pf().fitExtent([[4, 4], [W - 4, H - 4]], asiaV ? { type: 'Feature', geometry: { type: 'Polygon', coordinates: [[[L0, T1], [L1, T1], [L1, T0], [L0, T0], [L0, T1]]] } } : { type: 'Sphere' }); path = d3.geoPath(proj); }
+if (pf && d3.geoPath) { proj = pf().fitExtent([[4, 4], [W - 4, H - 4]], asiaV ? { type: 'Feature', geometry: { type: 'Polygon', coordinates: [[[L0, T0], [L1, T0], [L1, T1], [L0, T1], [L0, T0]]] } } : { type: 'Sphere' }); path = d3.geoPath(proj); }
 else {
 proj = (c) => [W * (c[0] - L0) / (L1 - L0), H * (T0 - c[1]) / (T0 - T1)];
 const ring = (r) => { let s = ''; for (let k = 0; k < r.length; k++) { const p = proj(r[k]); const jump = k > 0 && Math.abs(r[k][0] - r[k - 1][0]) > 180; s += (k === 0 || jump ? 'M' : 'L') + p[0].toFixed(1) + ',' + p[1].toFixed(1); } return s + 'Z'; };
@@ -1186,6 +1186,7 @@ return polys.map((p) => p.map(ring).join('')).join('');
 svg.append('path').attr('class', 'eo-map-sea').attr('d', path({ type: 'Sphere' }));
 if (d3.geoGraticule10 && d3.geoPath && pf) svg.append('path').attr('class', 'eo-map-grat').attr('d', path(d3.geoGraticule10()));
 svg.append('path').attr('class', 'eo-map-land').attr('d', path(EO_LAND));
+const G = eoGeo(); if (G && d3.geoPath && pf) svg.append('path').attr('class', 'eo-map-border').attr('d', path(G.borders));
 if (!eoM) { svg.append('text').attr('x', W / 2).attr('y', H / 2).attr('text-anchor', 'middle').attr('fill', 'var(--color-fg-muted)').attr('font-size', 12).text('Memuat data koneksi…'); return; }
 const P = (key) => proj((eoM.nodes[key] || EO_FIXED[key]).c);
 const gA = svg.append('g'), gH = svg.append('g'), gN = svg.append('g');
@@ -1380,7 +1381,8 @@ function eoSelect(id) { const was = eoSel; eoSel = id; if ((id === 'asia') !== (
 function eoRender() { eoSafe(eoChips); eoSafe(() => { eoM = eoBuild(); }); eoSafe(eoDrawMap); eoSafe(eoDetail); eoSafe(eoInsights); }
 eoRender();
 dash.onData(eoRender);
-dash.onData(() => { const g = dash.data('geo'); if (g.status === 'ok' && g.data && g.data.length && !EO_LAND.features.length) { g.data.forEach((r) => { if (r.kunci === 'land') EO_LAND = eoDec(r.data); else if (r.kunci === 'ctry') EO_CTRY = eoDec(r.data); }); eoSafe(eoRender); try { krRender(); } catch (e) {} } });
+// Boundaries come from js/data/geo.js (Natural Earth countries, geoBoundaries provinces).
+dash.onData(() => { const G = eoGeo(); if (G && EO_LAND !== G.land) { EO_LAND = G.land; EO_CTRY = G.ctry; eoSafe(eoRender); try { krRender(); } catch (e) {} } });
 let eoRT; window.addEventListener('resize', () => { clearTimeout(eoRT); eoRT = setTimeout(() => eoSafe(eoDrawMap), 120); });
 const KR_MODES = [
 { id: 'tot', label: 'Total kredit', a: 'tot0', b: 'tot1' },
@@ -1401,35 +1403,67 @@ function krChips() {
 const el = document.getElementById('eo-kr-chips'); if (!el || el.childElementCount) return;
 KR_MODES.forEach((m) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'eo-map-chip'; b.id = 'eo-kr-' + m.id; b.textContent = m.label; b.addEventListener('click', () => { krMode = m.id; krRender(); }); el.appendChild(b); });
 }
+// Credit map. Two kinds of number, two kinds of symbol:
+//   growth YoY (a rate)      -> colour of the province area (choropleth)
+//   credit position (amount) -> size of the circle (area grows with the amount)
+// Circles also carry the colour, so tiny provinces (DKI, DIY) stay readable.
 function krDraw() {
 const rows = krData(); const box = document.getElementById('eo-kr-box'); if (!box) return;
-const svg = d3.select('#eo-kr-svg'); const W = box.clientWidth || 600, H = Math.round(Math.max(200, W * 0.42));
+const svg = d3.select('#eo-kr-svg'); const W = box.clientWidth || 600, H = Math.round(Math.max(220, W * 0.46));
 svg.attr('viewBox', '0 0 ' + W + ' ' + H).attr('height', H).style('height', H + 'px').selectAll('*').remove();
-const B = { x0: 94.5, x1: 141.5, y0: 6.8, y1: -11.2 };
-const sc = Math.min(W / (B.x1 - B.x0), H / (B.y0 - B.y1)); const ox = (W - sc * (B.x1 - B.x0)) / 2, oy = (H - sc * (B.y0 - B.y1)) / 2;
-const P = (c) => [ox + (c[0] - B.x0) * sc, oy + (B.y0 - c[1]) * sc];
 svg.append('rect').attr('width', W).attr('height', H).attr('fill', 'var(--eo-sea)');
-const ring = (r) => { let s = ''; for (let k = 0; k < r.length; k++) { const p = P(r[k]); s += (k ? 'L' : 'M') + p[0].toFixed(1) + ',' + p[1].toFixed(1); } return s + 'Z'; };
-const polys = []; (EO_LAND.features || []).forEach((f) => { const g = f.geometry; if (!g) return; const add = (p) => { if (p[0].some((c) => c[0] > 90 && c[0] < 150 && c[1] > -15 && c[1] < 12)) polys.push(p); }; if (g.type === 'Polygon') add(g.coordinates); else if (g.type === 'MultiPolygon') g.coordinates.forEach(add); });
-svg.append('path').attr('d', polys.map((p) => p.map(ring).join('')).join('')).attr('fill', 'var(--eo-land)');
-if (!rows) { svg.append('text').attr('x', W / 2).attr('y', H / 2).attr('text-anchor', 'middle').attr('fill', 'var(--color-fg-muted)').attr('font-size', 12).text('Memuat data kredit…'); return; }
+const G = eoGeo();
+if (!G) { svg.append('text').attr('x', W / 2).attr('y', H / 2).attr('text-anchor', 'middle').attr('fill', 'var(--color-fg-muted)').attr('font-size', 12).text('Memuat peta…'); return; }
+// Mercator fitted to the 34 provinces: true shapes near the equator, north up.
+const proj = d3.geoMercator().fitExtent([[8, 8], [W - 8, H - 8]], G.provinces).clipExtent([[0, 0], [W, H]]);
+const path = d3.geoPath(proj), P = (c) => proj(c);
+svg.append('path').attr('d', path(d3.geoGraticule().step([5, 5])())).attr('fill', 'none').attr('stroke', 'var(--eo-grid)').attr('stroke-width', 0.6);
+// neighbours (Malaysia, Timor-Leste, PNG, ...) for context, quieter than Indonesia
+svg.append('path').attr('d', path(G.land)).attr('fill', 'var(--eo-land)').attr('fill-opacity', 0.45);
+svg.append('path').attr('d', path(G.borders)).attr('fill', 'none').attr('stroke', 'var(--eo-sea)').attr('stroke-width', 0.8);
+if (!rows) {
+svg.append('path').attr('d', path(G.provinces)).attr('fill', 'var(--eo-land)');
+svg.append('text').attr('x', W / 2).attr('y', H / 2).attr('text-anchor', 'middle').attr('fill', 'var(--color-fg-muted)').attr('font-size', 12).text('Memuat data kredit…'); return;
+}
 const m = KR_MODES.find((x) => x.id === krMode), st = krStats(rows, m);
-const rS = d3.scaleSqrt().domain([0, d3.max(rows, (r) => r[m.b] || 0) || 1]).range([0, Math.max(12, W / 28)]);
 const tip = document.getElementById('eo-kr-tip');
+const show = (e, r) => { const v = st.g(r); const bb = box.getBoundingClientRect(); tip.innerHTML = '<b>' + r.prov + '</b><br>' + m.label + ': Rp ' + krFmt((r[m.b] || 0) / 1000, 1) + ' T<br>YoY: ' + (v == null ? '–' : (v >= 0 ? '+' : '−') + krFmt(Math.abs(v), 1) + '%') + ' (nasional ' + krFmt(st.nat, 1) + '%)'; tip.style.left = Math.min(bb.width - 200, Math.max(4, e.clientX - bb.left + 12)) + 'px'; tip.style.top = Math.max(4, e.clientY - bb.top - 40) + 'px'; tip.style.opacity = 1; };
+const hide = () => { tip.style.opacity = 0; };
+const pick = (r) => { krSel = krSel === r.code ? null : r.code; krRender(); };
+const byCode = {}; rows.forEach((r) => { byCode[r.code] = r; });
+// 1. provinces, filled by growth class
+const gP = svg.append('g');
+G.provinces.features.forEach((f) => {
+const r = byCode[f.properties.bps]; const cl = r ? krClass(st.g(r), st.nat) : null;
+gP.append('path').attr('d', path(f)).attr('fill', 'var(--eo-land)');
+if (!r) return;
+gP.append('path').attr('d', path(f)).attr('fill', cl.c).attr('fill-opacity', krSel === r.code ? 0.5 : 0.3).style('cursor', 'pointer')
+.on('mousemove', (e) => show(e, r)).on('mouseleave', hide).on('click', () => pick(r));
+});
+svg.append('path').attr('d', path(G.provBorders)).attr('fill', 'none').attr('stroke', 'var(--color-panel)').attr('stroke-width', 0.9).attr('stroke-linejoin', 'round').attr('pointer-events', 'none');
+svg.append('path').attr('d', path(G.coast)).attr('fill', 'none').attr('stroke', 'var(--color-fg-muted)').attr('stroke-opacity', 0.35).attr('stroke-width', 0.5).attr('pointer-events', 'none');
+if (krSel && G.byBps[krSel]) svg.append('path').attr('d', path(G.byBps[krSel])).attr('fill', 'none').attr('stroke', 'var(--color-fg)').attr('stroke-width', 1.6).attr('pointer-events', 'none');
+// 2. circles at each province's anchor (see eoAnchor in js/data/geo.js)
+const anchor = {}; rows.forEach((r) => { const f = G.byBps[r.code]; anchor[r.code] = f ? eoAnchor(f, [r.lon, r.lat]) : [r.lon, r.lat]; });
+const rS = d3.scaleSqrt().domain([0, d3.max(rows, (r) => r[m.b] || 0) || 1]).range([0, Math.max(12, W / 28)]);
 const g = svg.append('g');
 rows.slice().sort((a, b) => (b[m.b] || 0) - (a[m.b] || 0)).forEach((r) => {
-const [x, y] = P([r.lon, r.lat]), v = st.g(r), cl = krClass(v, st.nat);
-g.append('circle').attr('cx', x).attr('cy', y).attr('r', Math.max(2.5, rS(r[m.b] || 0))).attr('fill', cl.c).attr('fill-opacity', 0.55).attr('stroke', krSel === r.code ? 'var(--color-fg)' : cl.c).attr('stroke-width', krSel === r.code ? 2 : 1).style('cursor', 'pointer')
-.on('mousemove', (e) => { const bb = box.getBoundingClientRect(); tip.innerHTML = '<b>' + r.prov + '</b><br>' + m.label + ': Rp ' + krFmt((r[m.b] || 0) / 1000, 1) + ' T<br>YoY: ' + (v == null ? '–' : (v >= 0 ? '+' : '−') + krFmt(Math.abs(v), 1) + '%') + ' (nasional ' + krFmt(st.nat, 1) + '%)'; tip.style.left = Math.min(bb.width - 200, Math.max(4, e.clientX - bb.left + 12)) + 'px'; tip.style.top = Math.max(4, e.clientY - bb.top - 40) + 'px'; tip.style.opacity = 1; })
-.on('mouseleave', () => { tip.style.opacity = 0; })
-.on('click', () => { krSel = krSel === r.code ? null : r.code; krRender(); });
+const [x, y] = P(anchor[r.code]), cl = krClass(st.g(r), st.nat);
+g.append('circle').attr('cx', x).attr('cy', y).attr('r', Math.max(2.5, rS(r[m.b] || 0))).attr('fill', cl.c).attr('fill-opacity', 0.6).attr('stroke', krSel === r.code ? 'var(--color-fg)' : 'var(--color-panel)').attr('stroke-width', krSel === r.code ? 2 : 1).style('cursor', 'pointer')
+.on('mousemove', (e) => show(e, r)).on('mouseleave', hide).on('click', () => pick(r));
 });
 const ranked = rows.filter((r) => st.g(r) != null && (r[m.b] || 0) > 0).sort((a, b) => st.g(b) - st.g(a));
 const narrow = W < 520; const lab = new Set((narrow ? [...ranked.slice(0, 2), ...ranked.slice(-1)] : [...ranked.slice(0, 3), ...ranked.slice(-2)]).map((r) => r.code)); if (krSel) lab.add(krSel);
-rows.forEach((r) => { if (!lab.has(r.code)) return; const [x, y] = P([r.lon, r.lat]); const v = st.g(r);
-g.append('text').attr('x', x).attr('y', y - Math.max(4, rS(r[m.b] || 0)) - 3).attr('text-anchor', 'middle').attr('font-size', narrow ? 9.5 : 12).attr('font-weight', 600).attr('fill', 'var(--color-fg)').attr('paint-order', 'stroke').attr('stroke', 'var(--eo-sea)').attr('stroke-width', 3).text(r.prov.replace('Kepulauan', 'Kep.').replace('Kalimantan', 'Kal.').replace('Sulawesi', 'Sul.').replace('Sumatera', 'Sum.') + ' ' + (v >= 0 ? '+' : '−') + krFmt(Math.abs(v), 0) + '%'); });
-(typeof EO_REG !== 'undefined' ? EO_REG : []).forEach((rg) => { const [x, y] = P(rg.c); g.append('path').attr('d', 'M' + x + ',' + (y - 6) + 'L' + (x + 6) + ',' + y + 'L' + x + ',' + (y + 6) + 'L' + (x - 6) + ',' + y + 'Z').attr('fill', 'var(--color-fg)').attr('stroke', 'var(--color-panel)').attr('stroke-width', 1.5);
-g.append('text').attr('x', x + 9).attr('y', y + 14).attr('font-size', window.EO_FS).attr('fill', 'var(--color-fg-muted)').attr('paint-order', 'stroke').attr('stroke', 'var(--eo-sea)').attr('stroke-width', 3).text(rg.name.split(' · ')[1]); });
+rows.forEach((r) => { if (!lab.has(r.code)) return; const [x, y] = P(anchor[r.code]); const v = st.g(r);
+g.append('text').attr('x', x).attr('y', y - Math.max(4, rS(r[m.b] || 0)) - 3).attr('text-anchor', 'middle').attr('font-size', narrow ? 9.5 : 12).attr('font-weight', 600).attr('fill', 'var(--color-fg)').attr('paint-order', 'stroke').attr('stroke', 'var(--eo-sea)').attr('stroke-width', 3).attr('pointer-events', 'none').text(r.prov.replace('Kepulauan', 'Kep.').replace('Kalimantan', 'Kal.').replace('Sulawesi', 'Sul.').replace('Sumatera', 'Sum.') + ' ' + (v >= 0 ? '+' : '−') + krFmt(Math.abs(v), 0) + '%'); });
+(typeof EO_REG !== 'undefined' ? EO_REG : []).forEach((rg) => { const [x, y] = P(rg.c); g.append('path').attr('d', 'M' + x + ',' + (y - 6) + 'L' + (x + 6) + ',' + y + 'L' + x + ',' + (y + 6) + 'L' + (x - 6) + ',' + y + 'Z').attr('fill', 'var(--color-fg)').attr('stroke', 'var(--color-panel)').attr('stroke-width', 1.5).attr('pointer-events', 'none');
+g.append('text').attr('x', x + 9).attr('y', y + 14).attr('font-size', window.EO_FS).attr('fill', 'var(--color-fg-muted)').attr('paint-order', 'stroke').attr('stroke', 'var(--eo-sea)').attr('stroke-width', 3).attr('pointer-events', 'none').text(rg.name.split(' · ')[1]); });
+// 3. scale bar (Indonesia spans ~5,000 km; the bar keeps distances honest)
+const km = W < 520 ? 250 : 500, lat0 = -6, lon0 = 96, dLon = km / (111.32 * Math.cos(lat0 * Math.PI / 180));
+const px = P([lon0 + dLon, lat0])[0] - P([lon0, lat0])[0], sx = 12, sy = H - 14;
+const sb = svg.append('g').attr('pointer-events', 'none');
+sb.append('path').attr('d', 'M' + sx + ',' + (sy - 4) + 'V' + sy + 'H' + (sx + px) + 'V' + (sy - 4)).attr('fill', 'none').attr('stroke', 'var(--color-fg-muted)').attr('stroke-width', 1.2);
+sb.append('text').attr('x', sx + px + 5).attr('y', sy).attr('font-size', 10.5).attr('fill', 'var(--color-fg-muted)').text(km + ' km');
 const leg = document.getElementById('eo-kr-leg');
 if (leg) leg.innerHTML = '<span style="--k:#1baf7a">Tumbuh di atas rata-rata nasional (' + krFmt(st.nat, 1) + '%)</span><span style="--k:#eda100">Tumbuh di bawah rata-rata</span><span style="--k:#e34948">Menyusut</span>';
 }

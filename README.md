@@ -68,6 +68,13 @@ identifies this app. Steps (from Google's official
 | **Tambah / perbarui data** | Form built from the Sheet's own headers. A new period is added at the bottom; an existing period gets only the cells you filled in |
 | **Cek data baru otomatis** | Asks the official sources (FRED for now) for periods newer than the Sheet's. Shows them first and writes only the rows you tick |
 | **Sumber data** | Every dataset, its range, its write mode, and when it was pulled |
+| **Aktivitas** | Recent jobs with every step and how long it took |
+
+Slow actions run as **background jobs** on the server (`backend/jobs.py`).
+The page shows a progress bar under the toolbar: the current step, how many
+datasets are done (the Sheet is read in batches of 4), and the elapsed time.
+*Rincian* lists every step. If you reload the page mid-job, the progress
+panel picks the job back up.
 
 Each dataset has a **write mode** in `datasets.yaml`:
 
@@ -96,6 +103,27 @@ column of the same row (e.g. column H in the SBN table) is never overwritten.
 that *proposes* rows. `fred.py` is the worked example (Fed Funds, US GDP).
 A new source (BPS, the World Bank Pink Sheet, …) means a new file plus one line
 in `REGISTRY`.
+
+## Maps
+
+| Map | Boundaries | Source |
+|---|---|---|
+| Peta koneksi (world, Asia) | Countries and land, 1:50m | [Natural Earth](https://www.naturalearthdata.com/), public domain |
+| Peta kredit (Indonesia) | 34 provinces | [geoBoundaries](https://www.geoboundaries.org/) IDN ADM1 (William & Mary geoLab), data © OpenStreetMap contributors, ODbL |
+
+Both live in `data/files/` as TopoJSON. TopoJSON stores each border shared
+by two neighbours once, which keeps the files small and leaves no gaps. Run
+`./scripts/build_geo.sh` to rebuild them; it needs Node.js.
+
+The credit map uses two symbols for two kinds of number:
+
+- **Growth (a rate)** colours the province area.
+- **Credit position (an amount)** sets the circle's area.
+
+Each circle sits at the province's point from the Sheet, if that point lies
+inside the province. Otherwise it moves to the province's island nearest to
+that point. Three Sheet points currently fall in the sea: Bangka Belitung,
+Kepulauan Riau, and NTT.
 
 ## Tests
 

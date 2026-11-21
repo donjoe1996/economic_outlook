@@ -1,12 +1,17 @@
 /*
  * Toolbar above the dashboard: connect Google, pull from the Sheet, add or
- * update a row, run automatic updaters, see where each dataset comes from.
+ * update a row, run automatic updaters, see where each dataset comes from,
+ * and see what the app is doing right now (progress) or did (activity log).
+ *
+ * Slow actions run as server-side jobs. runJob() starts one, then asks the
+ * server for its progress every 400 ms and draws the progress panel.
  *
  * Every value from the Sheet is shown with textContent (never innerHTML),
  * so text in a cell can't inject code into the page.
  */
 (function () {
   const $ = (sel) => document.querySelector(sel);
+  const ACTION_BUTTONS = ['#adm-login', '#adm-refresh', '#adm-add', '#adm-auto'];
 
   function el(tag, attrs, children) {
     const n = document.createElement(tag);
@@ -25,6 +30,7 @@
       method,
       headers: body ? { 'Content-Type': 'application/json' } : {},
       body: body ? JSON.stringify(body) : undefined,
+      cache: 'no-store',
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.detail || ('HTTP ' + r.status));
@@ -39,15 +45,69 @@
     toast._t = setTimeout(() => { t.className = 'adm-toast'; }, kind === 'bad' ? 9000 : 4500);
   }
 
-  function busy(btn, on, label) {
-    if (on) { btn.dataset.label = btn.textContent; btn.textContent = label || 'Memproses…'; btn.disabled = true; }
-    else { btn.textContent = btn.dataset.label; btn.disabled = false; }
-  }
-
   function fmtTime(iso) {
     if (!iso) return '–';
-    const d = new Date(iso);
-    return d.toLocaleString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    return new Date(iso).toLocaleString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+  const secs = (s) => (s < 60 ? s.toFixed(1) + ' dtk' : Math.floor(s / 60) + ' mnt ' + Math.round(s % 60) + ' dtk');
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // ------------------------------------------------------------ progress panel
+  let activeJob = null;
+
+  function setBusy(on) {
+    ACTION_BUTTONS.forEach((s) => { const b = $(s); if (b) b.disabled = on; });
+  }
+
+  function drawProgress(job) {
+    const box = $('#adm-prog');
+    box.hidden = false;
+    box.className = 'adm-prog ' + job.state;
+    $('#adm-prog-title').textContent = job.title;
+    $('#adm-prog-now').textContent = job.state === 'error' ? job.error : job.current;
+    const count = job.total ? job.done + '/' + job.total + ' · ' : '';
+    $('#adm-prog-meta').textContent = count + secs(job.elapsed);
+    const bar = $('#adm-prog-bar');
+    const known = job.total > 0;
+    bar.classList.toggle('indeterminate', job.state === 'running' && !known);
+    bar.style.width = job.state !== 'running' ? '100%' : known ? Math.max(4, 100 * job.done / job.total) + '%' : '35%';
+    $('#adm-prog-steps').replaceChildren(...job.steps.map((s) => el('li', { class: s.open ? 'open' : '' }, [
+      el('span', { text: s.text }), el('small', { text: s.open && job.state === 'running' ? 'berjalan… ' + secs(s.seconds) : secs(s.seconds) }),
+    ])));
+  }
+
+  // Start a job (POST) and follow it to the end. Resolves with its result.
+  async function runJob(path, body) {
+    setBusy(true);
+    try {
+      let job = await api('POST', path, body || {});
+      activeJob = job.id;
+      drawProgress(job);
+      while (job.state === 'running') {
+        await sleep(400);
+        job = await api('GET', '/api/jobs/' + job.id);
+        drawProgress(job);
+      }
+      if (job.state === 'error') throw new Error(job.error);
+      setTimeout(() => { if (activeJob === job.id) $('#adm-prog').hidden = true; }, 4000);
+      return job.result;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // If a job is still running (e.g. the page was reloaded mid-pull), follow it.
+  async function resumeRunning() {
+    try {
+      const running = (await api('GET', '/api/jobs')).find((j) => j.state === 'running');
+      if (!running) return;
+      setBusy(true);
+      let job = running;
+      while (job.state === 'running') { drawProgress(job); await sleep(400); job = await api('GET', '/api/jobs/' + job.id); }
+      drawProgress(job);
+      setBusy(false);
+      if (job.state === 'done') await dash.reload();
+    } catch (e) { setBusy(false); }
   }
 
   // ------------------------------------------------------------ status line
@@ -68,31 +128,24 @@
     if (m.sheet_url) $('#adm-sheet').href = m.sheet_url;
   }
   window.addEventListener('eo:data', renderStatus);
+  // Page-load phases reported by dash-shim.js
+  window.addEventListener('eo:phase', (e) => { $('#adm-status').textContent = e.detail; });
 
   // ------------------------------------------------------------ actions
-  async function login(e) {
-    const b = e.currentTarget;
-    busy(b, true, 'Lanjutkan di browser…');
+  async function login() {
     try {
-      await api('POST', '/api/auth/login');
-      busy(b, false); busy(b, true, 'Menarik data…');
-      await api('POST', '/api/refresh', {});  // first sign-in: fill the local copy right away
+      const r = await runJob('/api/auth/login');
       await dash.reload();
-      toast('Terhubung ke Google dan data ditarik dari Sheet.', 'ok');
-    }
-    catch (err) { toast(err.message, 'bad'); }
-    finally { busy(b, false); }
+      toast('Terhubung ke Google. ' + Object.keys(r.rows).length + ' dataset ditarik.', 'ok');
+    } catch (err) { toast(err.message, 'bad'); }
   }
 
-  async function refresh(e) {
-    const b = e.currentTarget;
-    busy(b, true, 'Menarik…');
+  async function refresh() {
     try {
-      const r = await api('POST', '/api/refresh', {});
+      const r = await runJob('/api/refresh');
       await dash.reload();
       toast(Object.keys(r.rows).length + ' dataset ditarik dari Google Sheet.', 'ok');
     } catch (err) { toast(err.message, 'bad'); }
-    finally { busy(b, false); }
   }
 
   // ------------------------------------------------------------ add / update row
@@ -115,7 +168,6 @@
     $('#adm-ds-help').textContent = (d.description || '') + ' · ' + d.range + ' · mode: ' +
       (d.write === 'append' ? 'tambah periode baru, atau perbarui periode yang sudah ada' : 'hanya mengisi/memperbaiki baris yang sudah ada');
 
-    // last rows, for orientation
     const t = el('table', { class: 'adm-tb' }, [
       el('tr', {}, d.columns.map((c) => el('th', { text: c.name }))),
       ...d.last_rows.map((r) => el('tr', {}, r.map((v) => el('td', { text: v })))),
@@ -142,27 +194,23 @@
     const d = described.find((x) => x.id === $('#adm-ds').value);
     const form = e.currentTarget;
     const values = d.columns.map((c) => form.elements['c' + c.index].value);
-    const b = $('#adm-submit');
-    busy(b, true, 'Menyimpan ke Sheet…');
+    $('#adm-form-dlg').close();
     try {
-      const r = await api('POST', '/api/datasets/' + encodeURIComponent(d.id) + '/rows', { values });
+      const r = await runJob('/api/datasets/' + encodeURIComponent(d.id) + '/rows', { values });
       const what = { append: 'Baris baru ditambahkan', update: 'Baris diperbarui', unchanged: 'Tidak ada yang berubah' }[r.action];
       toast(what + ' (baris ' + r.sheet_row + ' di Sheet, ' + r.cells_written + ' sel).', 'ok');
-      $('#adm-form-dlg').close();
       await dash.reload();
-    } catch (err) { toast(err.message, 'bad'); }
-    finally { busy(b, false); }
+    } catch (err) {
+      toast(err.message, 'bad');
+      $('#adm-form-dlg').showModal();  // keep what was typed, so it can be fixed
+    }
   }
 
   // ------------------------------------------------------------ updaters
   let preview = {};
 
-  async function openUpdaters(e) {
-    const b = e.currentTarget;
-    busy(b, true, 'Mengecek sumber…');
-    try { preview = await api('GET', '/api/updaters/preview'); }
-    catch (err) { toast(err.message, 'bad'); busy(b, false); return; }
-    busy(b, false);
+  async function openUpdaters() {
+    try { preview = await runJob('/api/updaters/preview'); } catch (err) { toast(err.message, 'bad'); return; }
     const box = $('#adm-upd');
     box.replaceChildren();
     for (const [id, p] of Object.entries(preview)) {
@@ -187,16 +235,26 @@
     document.querySelectorAll('#adm-upd input[type=checkbox]:checked').forEach((c) => {
       (picked[c.dataset.ds] = picked[c.dataset.ds] || []).push(preview[c.dataset.ds].rows[+c.dataset.i]);
     });
-    const b = $('#adm-upd-apply');
-    busy(b, true, 'Menulis ke Sheet…');
+    $('#adm-upd-dlg').close();
     try {
       let n = 0;
-      for (const [ds, rows] of Object.entries(picked)) { const r = await api('POST', '/api/updaters/apply', { dataset: ds, rows }); n += r.results.length; }
+      for (const [ds, rows] of Object.entries(picked)) { const r = await runJob('/api/updaters/apply', { dataset: ds, rows }); n += r.results.length; }
       toast(n + ' baris ditulis ke Sheet.', 'ok');
-      $('#adm-upd-dlg').close();
       await dash.reload();
     } catch (err) { toast(err.message, 'bad'); }
-    finally { busy(b, false); }
+  }
+
+  // ------------------------------------------------------------ activity log
+  async function openActivity() {
+    let list = [];
+    try { list = await api('GET', '/api/jobs'); } catch (err) { toast(err.message, 'bad'); return; }
+    const label = { running: 'berjalan', done: 'selesai', error: 'gagal' };
+    $('#adm-act').replaceChildren(...(list.length ? list.map((j) => el('details', { class: 'adm-act-job ' + j.state, open: j === list[0] }, [
+      el('summary', {}, [el('b', { text: j.title }), ' · ', el('span', { text: label[j.state] + ' · ' + secs(j.elapsed) })]),
+      j.error ? el('p', { class: 'adm-bad', text: j.error }) : null,
+      el('ol', { class: 'adm-steps' }, j.steps.map((s) => el('li', {}, [el('span', { text: s.text }), el('small', { text: secs(s.seconds) })]))),
+    ])) : [el('p', { class: 'adm-help', text: 'Belum ada aktivitas sejak server dimulai.' })]));
+    $('#adm-act-dlg').showModal();
   }
 
   // ------------------------------------------------------------ sources
@@ -226,6 +284,13 @@
     $('#adm-auto').addEventListener('click', openUpdaters);
     $('#adm-upd-form').addEventListener('submit', applyUpdaters);
     $('#adm-sources').addEventListener('click', openSources);
+    $('#adm-activity').addEventListener('click', openActivity);
+    $('#adm-prog-toggle').addEventListener('click', () => {
+      const s = $('#adm-prog-steps'); s.hidden = !s.hidden;
+      $('#adm-prog-toggle').textContent = s.hidden ? 'Rincian' : 'Sembunyikan';
+    });
+    $('#adm-prog-close').addEventListener('click', () => { $('#adm-prog').hidden = true; });
     document.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', () => b.closest('dialog').close()));
+    resumeRunning();
   });
 })();
