@@ -133,3 +133,13 @@ font-family: var(--font-anthropic-sans, sans-serif); color: var(--color-fg); }
 .eo-lg-wrap { margin: 0 2px; }
 /* Wide tables scroll inside their own box on narrow screens instead of widening the page. */
 .eo-tb { display: block; max-width: 100%; overflow-x: auto; }
+/* "Insight dari Claude" panel (js/sections/06-claude-insights.js) */
+.eo-ci-meta { font-size: 13px; color: var(--color-fg-muted); margin-bottom: 10px; }
+.eo-ci-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
+.eo-ci-item { border: 1px solid var(--color-border-line); border-radius: 8px; padding: 10px 12px; min-width: 0; }
+.eo-ci-bank { border-color: var(--eo-c-pmi); }
+.eo-ci-layer { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--color-fg-muted); }
+.eo-ci-title { font-size: 15px; margin: 2px 0 4px; }
+.eo-ci-body { font-size: 14px; line-height: 1.55; margin: 0; }
+.eo-ci-ev { font-size: 12.5px; color: var(--color-fg-muted); margin: 6px 0 0; line-height: 1.45; }
+.eo-ci-gaps { font-size: 13px; margin-top: 10px; line-height: 1.5; }

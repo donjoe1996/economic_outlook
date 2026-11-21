@@ -355,3 +355,9 @@ datasets:
     description: geoBoundaries IDN ADM1 (William & Mary geoLab, data OpenStreetMap, lisensi ODbL), disederhanakan. Dipakai Peta kredit.
     file: data/files/idn-provinces.topo.json
     frequency: "static"
+
+  insights:
+    title: Insight dari Claude
+    description: Bacaan data yang ditulis skill economic-insights (.claude/skills/economic-insights), setiap angkanya dicek terhadap scripts/digest.py.
+    file: data/insights/latest.json
+    frequency: "static"
