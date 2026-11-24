@@ -135,7 +135,17 @@ class Service:
                     "source": ds.source if ds.kind == "sheet" else "file",
                     "sheet_url": (self.cfg.url_of(ds.spreadsheet) if ds.is_feed and ds.spreadsheet
                                   else self.folder_url or None) if ds.kind == "sheet" else None}
-            if ds.kind == "file":
+            if ds.kind == "computed":
+                try:
+                    from . import compute as _compute
+                    ans = _compute.run(ds.compute, self.store)
+                    if ans is None:
+                        item.update(status="missing", message="Data sumbernya belum ada di penyimpanan (klik ⟳ Tarik)")
+                    else:
+                        item.update(status="ok", answer=ans)
+                except Exception as exc:  # a bug in one analysis must not blank the page
+                    item.update(status="error", message="Analisis gagal: " + short_error(exc))
+            elif ds.kind == "file":
                 try:
                     if ds.file.stat().st_size > 50_000:
                         # big static files (map shapes): own URL, so the browser caches them
@@ -229,6 +239,59 @@ class Service:
             progress.count(done, len(targets))
         return {"rows": rows, "failed": failed}
 
+    def auto_update(self, fetch, ids: list[str] | None = None, progress: Progress = NO_PROGRESS) -> dict:
+        """Refresh the auto feeds (`updater: {auto: true}`) from their APIs.
+
+        Like refresh(), one failure does not stop the others: what fails keeps
+        its previous copy, is recorded for the Metadata page and reported as a
+        warning. A feed that is still empty is first seeded from its `seed`
+        sheet (one-time import of hand-typed history), if it has one.
+        Returns {"rows": {id: n}, "failed": {id: message}, "notes": {id: text}}.
+        """
+        from .updaters import AUTO
+
+        targets = [d for d in self.cfg.datasets.values() if d.is_auto and (not ids or d.id in ids)]
+        rows: dict[str, int] = {}
+        failed: dict[str, str] = {}
+        notes: dict[str, str] = {}
+        for d in targets:
+            fn = AUTO.get(d.updater.get("type"))
+            if fn is None:
+                failed[d.id] = f"updater '{d.updater.get('type')}' tidak dikenal"
+                continue
+            try:
+                existing = self.store.get(d.id)
+                if existing is None and d.seed and self.sheets is not None:
+                    existing = self._seed(d, progress)
+                header, values, note = fn(d, existing, fetch, progress)
+                self.store.put(d.id, header=header, values=values, source="api", title=d.title, key=d.key,
+                               range_a1=None, types={0: "date"})
+                self.store.record(d.id, "pull", True, note)
+                rows[d.id], notes[d.id] = len(values), note
+            except SheetsNotAuthorized:
+                raise
+            except Exception as exc:
+                msg = short_error(exc)
+                failed[d.id] = msg
+                self.store.record(d.id, "pull", False, msg)
+                progress.warn(f"{d.title}: tidak bisa diperbarui ({msg}). Salinan lama tetap dipakai.")
+        return {"rows": rows, "failed": failed, "notes": notes}
+
+    def _seed(self, d: Dataset, progress: Progress) -> dict | None:
+        """Read a feed's hand-typed history from a Sheet once, as its first rows."""
+        sid, rng = str(d.seed.get("spreadsheet", "")), str(d.seed.get("range", ""))
+        if not (sid and rng):
+            return None
+        progress.step(f"{d.title}: impor awal dari Sheet ({rng})")
+        try:
+            values = with_retry(lambda: self.sheets.batch_get(sid, [rng]))[0]
+        except SheetsNotAuthorized:
+            raise
+        except Exception as exc:
+            progress.warn(f"{d.title}: impor awal dari Sheet gagal ({short_error(exc)}); mulai dari sumber API saja.")
+            return None
+        return {"header": list(d.columns), "values": [[("" if v is None else str(v)) for v in r] for r in values if r]}
+
     def _get_with_retry(self, group: list[Dataset], progress: Progress) -> list:
         ranges: list[str] = []
         for d in group:
@@ -320,7 +383,7 @@ class Service:
                 "range": ds.range.a1() if ds.range else None,
                 "sheet_link": None, "rows": 0, "gaps": [], "fetched_at": None, "changed_at": None,
             }
-            if ds.kind == "file":
+            if ds.kind in ("file", "computed"):
                 f = assess("static", None, today)
                 item.update(status=f.status, status_text=f.text)
                 items.append(item)

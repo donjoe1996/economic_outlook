@@ -142,7 +142,7 @@ INSIGHT_SCHEMA = {
         "insights": {"type": "array", "items": {
             "type": "object",
             "properties": {
-                "layer": {"type": "string", "enum": ["dunia", "as", "indonesia", "uang", "pasar", "kredit", "bank"]},
+                "layer": {"type": "string", "enum": ["dunia", "as", "indonesia", "uang", "pasar", "kredit", "btc", "bank"]},
                 "title": {"type": "string"},
                 "body": {"type": "string"},
                 "evidence": {"type": "string"},
@@ -160,7 +160,8 @@ INSIGHT_SCHEMA = {
 
 INSIGHT_RULES = """You write the "Insight dari Claude" panel of an Indonesian economic dashboard for one investor.
 You get a fact sheet in which every number is already computed. Read it top-down, the way the dashboard is built:
-world -> United States -> Indonesia -> money (rates, Rupiah, foreign flows) -> stock markets (IHSG vs Asia and global) -> bank credit -> what it means for bank stocks.
+world -> United States -> Indonesia -> money (rates, Rupiah, foreign flows) -> stock markets (IHSG vs Asia and global) -> bank credit -> Bitcoin -> what it means for bank stocks.
+Bitcoin (layer "btc", at most one insight, only if the facts have a Bitcoin section): say whether any indicator beat "always up" in the honest test, and what the trend and drawdown are. A rule that did not beat "always up" is context, not a signal; never present it as a forecast.
 Look for contrast (the world rises, Indonesia falls), a change of direction, tension (higher rates yet money still leaves), and data that is missing or overdue.
 
 Write 6 to 8 insights in plain Indonesian, one idea each, and make the last one layer "bank".

@@ -52,6 +52,7 @@
     ['MINE', 'Saham tambang', () => $('#eo-tambang')],
     ['RATE', 'Uang & valuasi', () => $('#eo-uang')],
     ['Q&A', 'Pertanyaan sebelum membeli', () => $('#eo-tanya')],
+    ['BTC', 'Bitcoin', () => $('#eo-btc')],
   ];
 
   // Indicator words people actually type -> the section where they live.
@@ -60,7 +61,7 @@
     BI: 'bi rate suku bunga pemotongan', IND: 'indikator kpi', CHRT: 'pmi inflasi cpi grafik chart', DRV: 'riil spread turunan',
     CRED: 'kredit provinsi sekda daerah', MKT: 'ihsg bank bbca bbri bmri bbni idxfinance asing flow', SECT: 'sektor bobot kapitalisasi',
     MINE: 'tambang batu bara coal nikel nickel cpo komoditas adro ptba antm inco', RATE: 'sbn yield obligasi valuasi per pbv srbi ksei',
-    MAP: 'peta map asia global perdagangan ekspor', AI: 'insight claude ringkasan ai', ASK: 'tanya chat pertanyaan claude', 'Q&A': 'pertanyaan syarat beli',
+    MAP: 'peta map asia global perdagangan ekspor', BTC: 'bitcoin btc kripto crypto mvrv etf halving on-chain hash', AI: 'insight claude ringkasan ai', ASK: 'tanya chat pertanyaan claude', 'Q&A': 'pertanyaan syarat beli',
   };
   // Single-stock pages (stock.html?tk=CODE). The list comes from /api/stocks:
   // stocks with their own sheet (BMRI) plus every row of the Saham sheet's
@@ -219,6 +220,8 @@
     { code: 'FLOW', name: 'Asing saham', ds: 'flow', f: 'flow_idr_t', d: 1, unit: ' T', chg: 'flow', good: 1, go: 'eo-market' },
     { code: 'COAL', name: 'Batu bara', ds: 'komoditas', f: 'coal', d: 0, chg: 'pct', good: 1, go: 'eo-tambang' },
     { code: 'NI', name: 'Nikel', ds: 'komoditas', f: 'nickel', d: 0, chg: 'pct', good: 1, go: 'eo-tambang' },
+    // good: 0 = neutral colour. Bitcoin rising is not, by itself, good or bad for Indonesian equities.
+    { code: 'BTC', name: 'Bitcoin (US$)', ds: 'btc_m', f: 'btc', d: 0, chg: 'pct', good: 0, go: 'eo-btc' },
   ];
 
   function spark(vals, kind, tone) {
@@ -264,11 +267,11 @@
         else if (m.chg === 'bp') { raw = (v - p) * 100; chg = sgn(Math.round(raw), 0) + ' bp'; }
         else { raw = v - p; chg = sgn(raw, m.d); }
       }
-      const tone = Math.abs(raw) < 1e-9 ? 'flat' : raw * m.good > 0 ? 'up' : 'dn';
+      const tone = Math.abs(raw) < 1e-9 || m.good === 0 ? 'flat' : raw * m.good > 0 ? 'up' : 'dn';
       const arrow = m.chg === 'flow' ? '' : raw > 0 ? '▲ ' : raw < 0 ? '▼ ' : '■ ';
       const t = el('button', 't-tile t-' + tone);
       t.type = 'button';
-      t.title = `${m.name}: ${last[m.per || 'month']} · ${m.href ? 'klik untuk membuka halaman sahamnya' : 'klik untuk ke bagiannya'}. Warna: hijau = baik untuk saham Indonesia, merah = buruk.`;
+      t.title = `${m.name}: ${last[m.per || 'month']} · ${m.href ? 'klik untuk membuka halaman sahamnya' : 'klik untuk ke bagiannya'}. ` + (m.good === 0 ? 'Warna netral: arah ini tidak dinilai baik atau buruk untuk saham Indonesia; perubahan sejak akhir bulan lalu.' : 'Warna: hijau = baik untuk saham Indonesia, merah = buruk.');
       const per = String(last[m.per || 'month']).replace(' (turunan)', '').replace(/ 20(\d\d)$/, " '$1");
       const head = el('div', 't-tile-h'); head.append(el('span', 't-code', m.code), el('span', 't-tile-n', m.name), el('span', 't-per', per));
       const val = el('div', 't-tile-v', (m.chg === 'flow' ? sgn(v, m.d) : nf(v, m.d)) + (m.unit || ''));
@@ -295,6 +298,7 @@
       ['BI', 'Ruang BI turunkan bunga', (() => { const v = pick('regime', 'c_sum'); return v && { status: v.status, statusText: v.statusText, detail: 'syarat penurunan BI Rate' }; })(), 'eo-checklist'],
       ['MKT', 'Pasar saham', pick('market', 'mk_verdict'), 'eo-market'],
       ['MINE', 'Saham tambang', pick('tambang_s', 'tb_verdict'), 'eo-tambang'],
+      ['BTC', 'Bitcoin (sinyal teruji)', pick('btc_s', 'btc_verdict'), 'eo-btc'],
       ['Q&A', 'Kesiapan membeli', (() => {
         // same thresholds as the questions panel (03-questions.js): ≤40% red, <80% amber
         const m = q && q.textContent.match(/(\d+) dari (\d+)/); if (!m) return null;

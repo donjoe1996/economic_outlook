@@ -124,6 +124,12 @@ class Dataset:
     #   {col: H, op: lookup, args: [A], dataset: flow, key: A, value: B}
     derived: tuple = ()
     columns: tuple = ()               # column names for a dataset that never lived in a Sheet
+    # Computed from other datasets on the server (e.g. "btc": backend/btc.py);
+    # the page reads the result like any dataset, nothing is stored.
+    compute: str = ""
+    # One-time import for an auto feed that starts empty in the store:
+    #   {spreadsheet: <id>, range: "Tab!A2:F"}  (e.g. hand-typed history)
+    seed: dict[str, Any] | None = None
     # ---- publishing schedule, for the metadata page (backend/freshness.py)
     frequency: str = "snapshot"       # monthly | quarterly | irregular | snapshot | static
     lag_days: int = 0                 # days after a period ends until it is usually published
@@ -136,7 +142,12 @@ class Dataset:
 
     @property
     def kind(self) -> str:
-        return "sheet" if self.range else "file"
+        return "computed" if self.compute else "sheet" if self.range else "file"
+
+    @property
+    def is_auto(self) -> bool:
+        """Refreshed from an API on every pull (backend/updaters AUTO)."""
+        return bool(self.updater and self.updater.get("auto")) and self.kind == "sheet"
 
     @property
     def writable(self) -> bool:
@@ -221,11 +232,12 @@ def load_config(path: Path = CONFIG_PATH, local_path: Path = LOCAL_SPREADSHEETS_
                 "otherwise new rows would fall outside it"
             )
         file = (ROOT / d["file"]) if d.get("file") else None
-        freq = d.get("frequency", "static" if file else "snapshot")
+        freq = d.get("frequency", "static" if (file or d.get("compute")) else "snapshot")
         if freq not in FREQUENCIES:
             raise ValueError(f"{ds_id}: frequency must be one of {FREQUENCIES}")
-        if not rng and not file:
-            raise ValueError(f"{ds_id}: give range, columns or file")
+        compute = str(d.get("compute") or "")
+        if not rng and not file and not compute:
+            raise ValueError(f"{ds_id}: give range, columns, file or compute")
         source = str(d.get("source", "store"))
         if source not in ("store", "sheet"):
             raise ValueError(f"{ds_id}: source must be store or sheet")
@@ -245,6 +257,8 @@ def load_config(path: Path = CONFIG_PATH, local_path: Path = LOCAL_SPREADSHEETS_
             source=source,
             derived=derived,
             columns=columns,
+            compute=compute,
+            seed=d.get("seed"),
             group=str(d.get("group", "macro")),
             frequency=freq,
             lag_days=int(d.get("lag_days", 0)),

@@ -384,6 +384,91 @@ datasets:
     release: "Berita dan perhitungan, Okt 2026"
     write: none
 
+  # ---------------- Bitcoin (section 14 · Bitcoin, backend/btc.py) ----------
+  # Machine data comes from APIs on every "Tarik" (updater auto: true, see
+  # backend/updaters/__init__.py); prices from GOOGLEFINANCE Sheets; the ETF
+  # flows from a Sheet kept by hand from TFTC/Farside (no free official API).
+  btc_chain:
+    group: btc            # raw tables: the dashboard reads btc_analysis
+    title: Bitcoin on-chain harian (Coin Metrics)
+    description: Harga, nilai pasar, MVRV, pasokan, koin di bursa, hash rate, biaya, dan alamat aktif BTC per hari, dari Coin Metrics Community API (gratis, tanpa kunci). Diperbarui otomatis setiap Tarik.
+    columns: ["Tanggal", "Harga (USD)", "Nilai pasar (USD)", "MVRV", "Pasokan (BTC)", "Di bursa (BTC)", "Hash rate (EH/s)", "Biaya transaksi (USD)", "Alamat aktif"]
+    write: none
+    frequency: "irregular"
+    stale_after_days: 4
+    release: "Coin Metrics Community API, data harian terbit sehari kemudian"
+    release_url: "https://docs.coinmetrics.io/api/v4/"
+    note: "Metrik berbayar (mis. pasokan yang tidak bergerak 1 tahun) tidak tersedia di tier gratis; bila API menolak satu metrik, kolomnya kosong dan yang lain tetap diperbarui."
+    updater:
+      type: coinmetrics
+      auto: true
+      asset: btc
+      start: "2010-07-18"
+      overlap_days: 7
+      metrics:
+        - {metric: PriceUSD, sig: 6}
+        - {metric: CapMrktCurUSD, sig: 7}
+        - {metric: CapMVRVCur, sig: 5}
+        - {metric: SplyCur, sig: 8}
+        - {metric: SplyExNtv, sig: 7}
+        - {metric: HashRate, scale: 0.000001, sig: 6}     # TH/s -> EH/s
+        - {metric: FeeTotUSD, sig: 6}
+        - {metric: AdrActCnt, sig: 7}
+
+  btc_m2:
+    group: btc            # raw tables: the dashboard reads btc_analysis
+    title: Uang beredar M2 AS, China, kawasan euro (bulanan)
+    description: M2 AS (FRED M2SL), M2 China (PBoC, diisi manual), kurs CNY per USD (FRED EXCHUS), M2 kawasan euro (ECB BSI), USD per EUR (FRED EXUSEU). Dipakai untuk likuiditas global di bagian Bitcoin.
+    columns: ["Tanggal", "US M2 (USD bn)", "China M2 (CNY bn)", "CNY per USD", "Euro M2 (EUR bn)", "USD per EUR"]
+    write: append
+    frequency: "monthly"
+    lag_days: 30
+    value_col: 2
+    release: "FRED dan ECB otomatis tiap Tarik; M2 China dari laporan bulanan PBoC, sekitar pertengahan bulan berikutnya, diisi lewat + Data"
+    release_url: "https://www.pbc.gov.cn/en/3688247/3688978/3709137/index.html"
+    note: "Kolom M2 China tidak pernah ditimpa updater. Riwayat awal diimpor sekali dari sheet 'Bitcoin Lab money supply v3'."
+    updater: {type: liquidity, auto: true, start: "2008-01"}
+    seed: {spreadsheet: "1tLeDrMxdCpEbC1oPScISWJqSdWES8EXLU8tgRRlWBws", range: "Untitled!A2:F"}
+
+  btc_etf:
+    group: btc            # raw tables: the dashboard reads btc_analysis
+    title: Arus bersih ETF Bitcoin spot AS (harian)
+    description: Arus bersih harian semua ETF Bitcoin spot AS (US$ juta), arus GBTC, total aset. Sumber TFTC (tftc.io/bitcoin-etf-flows, CC BY 4.0) dari tabel Farside Investors; sheet diperbarui manual.
+    spreadsheet: "1XAOPS84DKU-ixigACpf8da0DL65tk7L-_YYDUrncyhw"
+    range: "Untitled!A2:D"
+    frequency: "irregular"
+    stale_after_days: 7
+    release: "Sheet 'Bitcoin Lab ETF flows (TFTC)', diperbarui manual dari TFTC"
+    release_url: "https://tftc.io/bitcoin-etf-flows"
+    source: sheet
+
+  btc_live:
+    group: btc            # raw tables: the dashboard reads btc_analysis
+    title: Harga BTC harian (Google Finance)
+    description: Penutupan harian CURRENCY:BTCUSD dari rumus GOOGLEFINANCE; dipakai untuk hari terbaru yang belum dirilis Coin Metrics.
+    spreadsheet: "1O78BPxpumPufIYbtQ60WMnmVWIQFAG94LWriIt3xmKs"
+    range: "Untitled!A2:B"
+    frequency: "irregular"
+    stale_after_days: 3
+    release: "Rumus GOOGLEFINANCE di sheet 'BTC daily prices (live)'"
+    source: sheet
+
+  btc_spx:
+    group: btc            # raw tables: the dashboard reads btc_analysis
+    title: S&P 500 harian (Google Finance)
+    description: Penutupan harian INDEXSP:.INX dari rumus GOOGLEFINANCE, untuk tren saham AS dan korelasinya dengan Bitcoin.
+    spreadsheet: "1sU3CeBJfWk0rt0X18UdYwUpXByU4ObZiZttN7WgdFH8"
+    range: "Untitled!A2:B"
+    frequency: "irregular"
+    stale_after_days: 5
+    release: "Rumus GOOGLEFINANCE di sheet 'S&P 500 daily (live)'"
+    source: sheet
+
+  btc_analysis:
+    title: Analisis Bitcoin (dihitung)
+    description: Karakter harga, 10 indikator konteks dengan uji jujur melawan tebakan 'selalu naik', arah tren, dan sinyal keputusan. Dihitung di server (backend/btc.py) dari dataset btc_*; tidak disimpan.
+    compute: btc
+
   # ---------------- Local files --------------------------------------------
   world:
     title: Batas negara dunia (Natural Earth 1:50m)
