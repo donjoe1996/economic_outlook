@@ -13,7 +13,7 @@ Fast reads answer directly:
 Slow actions start a background job and answer at once with the job
 ({id, state, current, done, total, steps, ...}); the page then follows it:
     POST /api/auth/login           sign in to Google, then pull the Sheet
-    POST /api/refresh              sync with Drive, pull the price feeds, sync back
+    POST /api/refresh              sync with Drive, pull the price feeds and API feeds, sync back
     POST /api/sync                 sync with Drive only
     GET  /api/store                Drive folder, unsynced files, last sync
     POST /api/datasets/{id}/table  save a table edited in the app
@@ -95,6 +95,8 @@ def pull_all(p: Job, ids: list[str] | None = None) -> dict:
     else:
         p.warn("Google Drive belum diizinkan: data hanya disimpan di komputer ini. Klik 'Hubungkan Google' sekali lagi untuk menyetujui akses Drive.")
     out.update(svc.refresh(ids, progress=p))
+    # API feeds (Coin Metrics, FRED/ECB M2): no sign-in needed, merged into the store
+    out["auto"] = svc.auto_update(http_get, ids, progress=p)
     out["drive_push"] = svc.sync_push(p)
     return out
 
@@ -335,7 +337,8 @@ def add_stock(body: StockBody):
 def updaters_preview():
     def work(p: Job):
         svc = service()
-        targets = [ds for ds in svc.cfg.datasets.values() if ds.updater]
+        # auto feeds update themselves on every pull; only proposers are checked here
+        targets = [ds for ds in svc.cfg.datasets.values() if ds.updater and not ds.is_auto]
         out = {}
         for i, ds in enumerate(targets):
             p.count(i, len(targets))

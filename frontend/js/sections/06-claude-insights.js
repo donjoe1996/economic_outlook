@@ -7,7 +7,7 @@
  * textContent only.
  */
 (function () {
-  const LAYER = { dunia: 'Dunia', as: 'AS', indonesia: 'Indonesia', uang: 'Uang', pasar: 'Pasar saham', kredit: 'Kredit', bank: 'Untuk saham bank' };
+  const LAYER = { dunia: 'Dunia', as: 'AS', indonesia: 'Indonesia', uang: 'Uang', pasar: 'Pasar saham', kredit: 'Kredit', btc: 'Bitcoin', bank: 'Untuk saham bank' };
   const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
 
   // The button: Claude reads the fact sheet and writes the panel (about a minute).

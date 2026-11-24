@@ -53,6 +53,7 @@ SYNONYMS = {
 MAX_DATASETS = 4
 LAST_ROWS = 8
 CODE = re.compile(r"\b[A-Z]{4}\b")
+BTC_WORDS = re.compile(r"\b(bitcoin|btc|kripto|crypto|mvrv|halving|etf bitcoin|on-?chain|stock-to-flow|s2f|puell|hash ?rate)\b", re.I)
 
 
 _FACTS: dict = {}
@@ -176,6 +177,15 @@ def build(question: str, cfg, store, history: list[dict] | None = None, facts: s
         if b:
             blocks.append(b)
             used.append(cfg.datasets[ds_id].title)
+    if BTC_WORDS.search(question + " " + " ".join(str(t.get("q", "")) for t in (history or [])[-1:])):
+        from . import btc, compute
+        try:
+            b = btc.chat_block(compute.run("btc", store))
+        except Exception:
+            b = ""
+        if b:
+            blocks.append(b)
+            used.append("Bitcoin rinci")
     known = set(stocks.registry(cfg, store))
     # stock codes in this question, or in the previous one ("lalu arus asingnya?")
     recent = question + " " + " ".join(str(t.get("q", "")) for t in (history or [])[-1:])

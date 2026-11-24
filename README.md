@@ -48,7 +48,7 @@ Read it top-down:
 
 | Zone | What it answers |
 |---|---|
-| **Monitor** (top strip) | What moved? 13 key series, each with its latest value, change and a 12-month line. Click a tile to jump to its section |
+| **Monitor** (top strip) | What moved? The key series (indices, rates, commodities, Bitcoin), each with its latest value, change and a 12-month line. Click a tile to jump to its section |
 | **Sinyal keputusan** | What does it mean? The verdict each section already computes, side by side (world, US, Indonesia, BI, market, mining, readiness) |
 | **Insight dari Claude** | Why? The current written reading, refreshed with the ✦ button (see *Claude in the app*) |
 | **Tanya Claude** | Your own question, answered from the same data (chat) |
@@ -70,6 +70,7 @@ Read it top-down:
 |---|---|---|
 | Every dataset (PMI, BI Rate, flows, stock fundamentals, dividends, …) | one JSON file each in the Drive folder set under `store: drive_folder:` in `config/datasets.yaml`, mirrored in `data/store/` | the app: **＋ Data** form, **Edit tabel** on the Metadata page, FRED updater, Claude buttons |
 | Prices (IHSG, sectors, global indices, every stock) | Google Sheets with `GOOGLEFINANCE` formulas (`source: sheet` in the YAML) | Google, automatically; copied into the store on every **⟳ Tarik** |
+| Machine data with an API (Bitcoin on-chain metrics, M2 money supply) | the same JSON store; fetched from Coin Metrics, FRED and the ECB (`updater: {auto: true}`) | the app, automatically, on every **⟳ Tarik** (see *Bitcoin*) |
 | Map shapes | `data/files/` in this repo | nobody (static) |
 
 **The file format.** Each `<id>.json` holds a schema (column names and types:
@@ -208,7 +209,7 @@ local folder (e.g. `~/Projects/economic_outlook`) is safer.
 
 | Toolbar button | What happens |
 |---|---|
-| **⟳ Tarik** | Syncs with the Drive folder and copies the latest prices from the feed Sheets (see *Where the data lives*) |
+| **⟳ Tarik** | Syncs with the Drive folder, copies the latest prices from the feed Sheets, and refreshes the API feeds (Coin Metrics, FRED/ECB M2) (see *Where the data lives*) |
 | **＋ Data** | Form built from each dataset's columns. A new period is added at the bottom; an existing period gets only the cells you filled in |
 | **Edit tabel** (Metadata page) | The whole dataset as an editable table: change cells, add or delete rows, with type checks. Price feeds open read-only |
 | **Cek data baru otomatis** | Asks the official sources (FRED for now) for periods newer than the stored ones. Shows them first and saves only the rows you tick |
@@ -410,6 +411,64 @@ Notes on this port from the prototype:
   page now uses the payout you type (default: FY2025 payout from the
   `Fundamental` tab), so its DDM value is higher than the prototype's.
 - A market event sourced only from Wikipedia was left out of the flow tab.
+
+## Bitcoin (section 14 · BTC)
+
+Ported from the "Bitcoin Monte Carlo Lab" prototype, **without the Monte
+Carlo simulation**. Three tabs answer three questions in order:
+
+| Tab | Question |
+|---|---|
+| **Karakter** | How does Bitcoin move? Daily spread, fat tails, volatility streaks, drawdowns, year by year; whole history or the last 4 years |
+| **Konteks per indikator** | What is the backdrop? Ten indicators, each with its state now, what followed each state, and the honesty test below |
+| **Arah** | Which way, and has anything ever called it? Trend state, drawdown and halving-cycle analogs, a conclusion, and questions to think through |
+
+**The honesty test (first principles).** Bitcoin finished higher a year
+later on roughly four days in five, so any rule that mostly says "up" looks
+clever. Every indicator is therefore judged against **"always guess up"**:
+
+1. each past day gets a state, using only what was known that day;
+2. once a month, the indicator's **textbook rule** (fixed before looking at
+   the data, e.g. "up unless MVRV Z ≥ 3") and a **learned rule** (what that
+   state did before, only from outcomes already known) call up or down;
+3. the hit rate is compared with "always up" on the same dates;
+4. monthly tests with a 12-month horizon overlap, so *n* tests count as about
+   *n* × 30 / 365 independent ones; the noise band is √(0.25 / n_eff). Only a
+   textbook rule that beats "always up" by more than that is marked
+   **✓ teruji**.
+
+The decision signal (Sinyal keputusan, BTC card) combines only the ✓ teruji
+indicators. If none passed it says so: "no tested directional edge" is a
+finding. The Monitor tile for BTC is neutral grey on purpose: a rising
+Bitcoin is not, by itself, good or bad for Indonesian equities.
+
+**Indicators and their data**
+
+| Indicator | Data | Source |
+|---|---|---|
+| Trend (200-day average), character, drawdown, halving cycle | daily price | Coin Metrics `PriceUSD`; the newest day from Google Finance (`btc_live`) |
+| MVRV Z-score, realized price | `CapMrktCurUSD`, `CapMVRVCur`, `SplyCur` | Coin Metrics Community API |
+| Coins on exchanges | `SplyExNtv` ÷ `SplyCur` | Coin Metrics |
+| Hash rate | `HashRate` (TH/s → EH/s) | Coin Metrics |
+| Puell multiple | price × block subsidy from the halving schedule | computed |
+| Network use | `AdrActCnt` | Coin Metrics |
+| Stock-to-flow (PlanB 2019) | `SplyCur` | computed: market cap = e^14.6227 × S2F^3.31954 |
+| Global liquidity | M2 US (FRED `M2SL`), euro area (ECB BSI), CNY/USD (`EXCHUS`), USD/EUR (`EXUSEU`); **China M2 by hand** from the PBoC monthly report | `btc_m2`; the first run imports the history once from the Lab's sheet (`seed:` in the YAML) |
+| ETF flows | daily net flows of the US spot ETFs | sheet "Bitcoin Lab ETF flows (TFTC)", kept by hand from tftc.io (no free official API) |
+| US stock mood | S&P 500 daily | sheet "S&P 500 daily (live)" (GOOGLEFINANCE) |
+
+Paid-only Coin Metrics metrics (e.g. supply unmoved for 1+ years) are not on
+the free tier. If the API refuses one metric, that column stays blank, a
+warning says which, and every other column still updates. Funding rates and
+options positioning are not included (no free, credible source was wired in).
+
+**Where it is computed.** `backend/btc.py` does every calculation once; the
+dataset `btc_analysis` (`compute: btc` in the YAML) hands the result to the
+page, and `scripts/digest.py` prints from the same result, so the numbers on
+the page and the numbers Claude may cite are identical (and the insight number
+check covers Bitcoin too). The raw daily tables (`group: btc`) are not sent to
+the dashboard; only the analysis (~150 KB) is. Code: `frontend/js/sections/08-bitcoin.js`,
+`frontend/css/bitcoin.css`, `backend/updaters/coinmetrics.py`, `backend/updaters/liquidity.py`.
 
 ## Claude in the app: buttons and chat (through Claude Code)
 

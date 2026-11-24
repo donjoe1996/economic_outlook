@@ -13,7 +13,7 @@ publish  Runs the check, stores its result in the file, and writes
 Schema of the draft:
 {
   "data_as_of": "Sep'26 (makro), Okt'26 (pasar)",
-  "insights": [{"layer": "dunia|as|indonesia|uang|pasar|kredit|bank",
+  "insights": [{"layer": "dunia|as|indonesia|uang|pasar|kredit|btc|bank",
                 "title": "...", "body": "...", "evidence": "..."}],
   "data_gaps": ["..."]
 }
@@ -32,7 +32,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 OUT_DIR = ROOT / "data" / "insights"
-LAYERS = {"dunia", "as", "indonesia", "uang", "pasar", "kredit", "bank"}
+LAYERS = {"dunia", "as", "indonesia", "uang", "pasar", "kredit", "btc", "bank"}
 
 _NUM = re.compile(r"(?<![\w'’])[-−+]?\d[\d.,]*")
 # Numbers that are part of a name, not data: "S&P 500", "FTSE 100", "10 tahun".

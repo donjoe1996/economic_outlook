@@ -8,6 +8,7 @@
 <link rel="stylesheet" href="css/dashboard.css">
 <link rel="stylesheet" href="css/admin.css">
 <link rel="stylesheet" href="css/terminal.css">
+<link rel="stylesheet" href="css/bitcoin.css">
 <script>try{document.documentElement.dataset.theme=localStorage.getItem("eo-theme")||"dark"}catch(e){document.documentElement.dataset.theme="dark"}</script>
 </head>
 <body>
@@ -93,7 +94,7 @@
 <header class="eo-head">
 <h1 class="eo-title">Indonesia Economic Outlook</h1>
 <p class="eo-sub">Dibaca dari luar ke dalam: peta koneksi, lalu kondisi dunia, AS, dan Indonesia, lalu grafik detail. Konteks untuk keputusan investasi saham, khususnya perbankan.</p>
-<div class="eo-read"><b>Insight Claude</b> → <b>Tanya Claude</b> → <b>Peta</b> → <b>1 · Dunia</b> → <b>2 · AS</b> → <b>3 · Indonesia</b> → <b>4 · BI</b> → <b>5 · Indikator</b> → <b>6 · Grafik</b> → <b>7 · Turunan</b> → <b>8 · Kredit</b> → <b>9 · Pasar saham</b> → <b>10 · Komposisi IHSG</b> → <b>11 · Saham tambang</b> → <b>12 · Uang & valuasi</b> → <b>13 · Pertanyaan</b></div>
+<div class="eo-read"><b>Insight Claude</b> → <b>Tanya Claude</b> → <b>Peta</b> → <b>1 · Dunia</b> → <b>2 · AS</b> → <b>3 · Indonesia</b> → <b>4 · BI</b> → <b>5 · Indikator</b> → <b>6 · Grafik</b> → <b>7 · Turunan</b> → <b>8 · Kredit</b> → <b>9 · Pasar saham</b> → <b>10 · Komposisi IHSG</b> → <b>11 · Saham tambang</b> → <b>12 · Uang & valuasi</b> → <b>13 · Pertanyaan</b> → <b>14 · Bitcoin</b></div>
 </header>
 <section class="eo-panel" id="eo-claude">
 <h2 class="eo-panel-title"><span class="eo-layer">Claude</span> Insight dari Claude <span class="eo-chart-hint">bacaan singkat yang ditulis Claude Code dari ringkasan data; setiap angkanya dicek otomatis</span></h2>
@@ -627,6 +628,10 @@
 <h3 class="eo-nar-title" style="margin-top:14px">Disiplin proses</h3>
 <ol class="eo-q-rules"><li>Tulis tesis satu kalimat dan syarat batalnya sebelum membeli.</li><li>Masuk bertahap, jangan sekaligus.</li><li>Tentukan porsi saham Indonesia dari total aset, bukan dari semangat.</li><li>Angka 12 bulan menunjukkan arah, bukan ramalan.</li></ol>
 </section>
+<section class="eo-panel" id="eo-btc">
+<h2 class="eo-panel-title"><span class="eo-layer">14 · Bitcoin</span> Bitcoin: karakter, konteks, dan arah <span class="eo-chart-hint">setiap indikator diuji melawan tebakan "selalu naik" · data on-chain Coin Metrics, M2 FRED/ECB/PBoC, ETF TFTC · bukan rekomendasi</span></h2>
+<div id="eo-btc-body"><div class="eo-q-line">Memuat…</div></div>
+</section>
 <section class="eo-legend">
 <div class="eo-legend-item"><span class="eo-dot" style="background: var(--eo-c-pmi)"></span>PMI Manufaktur</div>
 <div class="eo-legend-item"><span class="eo-dot" style="background: var(--eo-c-gdp)"></span>PDB riil</div>
@@ -656,6 +661,7 @@
 <script src="js/sections/05-sectors.js"></script>
 <script src="js/sections/06-claude-insights.js"></script>
 <script src="js/sections/07-claude-chat.js"></script>
+<script src="js/sections/08-bitcoin.js"></script>
 <script src="js/terminal.js"></script>
 </body>
 </html>

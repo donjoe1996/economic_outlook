@@ -200,6 +200,15 @@ def main() -> None:
         w("\n## Perdagangan nonmigas per mitra (kumulatif Jan–Agu 2026, USD miliar: ekspor/impor)")
         w("- " + ", ".join(f"{r[0]} {num(r[1]):.1f}/{num(r[2]) if num(r[2]) is not None else 0:.1f}" for r in tr[:5]))
 
+    # ---- Bitcoin (backend/btc.py: the same calculation the page draws) ------
+    from backend import compute  # noqa: E402
+    w("\n## Bitcoin (USD; uji = seberapa sering aturan teori benar vs 'selalu naik', tes bulanan tanpa mengintip)")
+    try:
+        for line in __import__("backend.btc", fromlist=["facts_lines"]).facts_lines(compute.run("btc", cache)):
+            w(line)
+    except Exception as exc:  # a broken analysis must not break the whole fact sheet
+        w(f"- Bitcoin: analisis gagal ({exc})")
+
     # ---- what is missing / overdue -----------------------------------------
     w("\n## Kesegaran data (lihat halaman Metadata)")
     late = [d for d in meta["datasets"] if d["status"] in ("error", "late", "due", "stale")]

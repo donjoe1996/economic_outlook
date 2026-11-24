@@ -1,0 +1,77 @@
+/*
+ * 14 · Bitcoin (js/sections/08-bitcoin.js). Reuses the dashboard's panels,
+ * tabs (.eo-tabs) and tables (.eo-tb); this file adds only what is new.
+ *
+ * Series colours were checked with the dataviz palette validator against both
+ * surfaces (light #ffffff, dark #141619): lightness band, chroma, colour-blind
+ * separation and 3:1 contrast all pass. Price is drawn in ink, not a hue.
+ */
+:root[data-theme="light"] { --btc-s1: #2a78d6; --btc-s2: #b06f00; }
+:root[data-theme="dark"] { --btc-s1: #4a8fe0; --btc-s2: #c07f00; }
+#eo-btc { --btc-ink: var(--color-fg); --btc-grid: var(--eo-grid, color-mix(in srgb, var(--color-fg) 8%, transparent)); }
+
+.btc-how { font-size: 14px; line-height: 1.55; margin: 6px 0 12px; max-width: 80ch; }
+.btc-how b { font-weight: 600; }
+
+/* indicator summary: the decision core */
+.btc-sum { width: 100%; border-collapse: collapse; font-size: 13.5px; margin: 6px 0 4px; }
+.btc-sum th { text-align: left; font-weight: 600; color: var(--color-fg-muted); font-size: 12px; padding: 5px 6px; border-bottom: 1px solid var(--color-border-line); white-space: nowrap; }
+.btc-sum td { padding: 6px; border-top: 1px solid var(--color-border-line); vertical-align: top; }
+.btc-sum tr.btc-row { cursor: pointer; }
+.btc-sum tr.btc-row:hover td, .btc-sum tr.btc-row:focus-within td { background: color-mix(in srgb, var(--color-fg) 5%, transparent); }
+.btc-sum td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.btc-sum .sub { display: block; color: var(--color-fg-muted); font-size: 12px; }
+.btc-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+.btc-pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12.5px; font-weight: 600; border: 1px solid var(--color-border-line); white-space: nowrap; }
+.btc-pill.ok { color: var(--color-ok); border-color: color-mix(in srgb, var(--color-ok) 55%, transparent); }
+.btc-pill.bad { color: var(--color-bad); border-color: color-mix(in srgb, var(--color-bad) 55%, transparent); }
+.btc-pill.warn { color: var(--color-warn); border-color: color-mix(in srgb, var(--color-warn) 55%, transparent); }
+.btc-test { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.btc-test i { font-style: normal; font-weight: 700; margin-right: 3px; }
+.btc-test.ok i { color: var(--color-ok); } .btc-test.bad i { color: var(--color-bad); } .btc-test.na { color: var(--color-fg-muted); }
+
+/* stat tiles */
+.btc-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; margin: 10px 0; }
+.btc-card { border: 1px solid var(--color-border-line); border-radius: 10px; padding: 9px 11px; background: var(--t-panel-2, transparent); min-width: 0; }
+.btc-card .l { font-size: 12px; color: var(--color-fg-muted); }
+.btc-card .v { font-size: 20px; font-weight: 600; line-height: 1.25; margin: 2px 0; font-variant-numeric: tabular-nums; }
+.btc-card .d { font-size: 12px; color: var(--color-fg-muted); line-height: 1.4; }
+.btc-card.ok .v { color: var(--color-ok); } .btc-card.bad .v { color: var(--color-bad); } .btc-card.warn .v { color: var(--color-warn); }
+
+.btc-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
+.btc-chip { font: inherit; font-size: 13px; color: var(--color-fg); background: transparent; border: 1px solid var(--color-border-line); border-radius: 999px; padding: 4px 10px; cursor: pointer; }
+.btc-chip[aria-pressed="true"] { border-color: var(--color-fg); background: color-mix(in srgb, var(--color-fg) 8%, transparent); font-weight: 600; }
+.btc-chip:focus-visible { outline: 2px solid var(--t-blue, #2a78d6); outline-offset: 2px; }
+.btc-chip .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; background: var(--color-fg-muted); }
+.btc-chip .dot.ok { background: var(--color-ok); }
+
+/* charts */
+.btc-chart { position: relative; margin: 6px 0 2px; }
+.btc-chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.btc-chart .tk { fill: var(--color-fg-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.btc-chart .gl { stroke: var(--btc-grid); stroke-width: 1; }
+.btc-chart .base { stroke: var(--color-fg-muted); stroke-width: 1; }
+.btc-chart .lab { fill: var(--color-fg-muted); font-size: 11.5px; }
+.btc-chart .hov { stroke: var(--color-fg-muted); stroke-width: 1; stroke-dasharray: 3 3; }
+.btc-chart .dotr { stroke: var(--color-panel); stroke-width: 2; }
+.btc-tip { position: absolute; pointer-events: none; background: var(--color-panel); border: 1px solid var(--color-border-line); border-radius: 8px; padding: 6px 9px; font-size: 12.5px; color: var(--color-fg); box-shadow: 0 4px 14px rgba(0, 0, 0, .18); white-space: nowrap; z-index: 6; opacity: 0; transition: opacity .08s; }
+.btc-tip b { font-weight: 600; }
+.btc-tip .sw { display: inline-block; width: 10px; height: 3px; border-radius: 2px; margin-right: 5px; vertical-align: 3px; }
+.btc-leg { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12.5px; color: var(--color-fg-muted); margin: 2px 0 6px; }
+.btc-leg i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; margin-right: 5px; vertical-align: 3px; }
+.btc-leg i.blk { height: 10px; width: 10px; border-radius: 2px; vertical-align: -1px; }
+.btc-h3 { font-size: 14.5px; font-weight: 600; margin: 16px 0 2px; }
+.btc-cap { font-size: 13px; color: var(--color-fg-muted); margin: 0 0 4px; max-width: 85ch; }
+.btc-win { display: inline-flex; gap: 4px; margin-left: 8px; vertical-align: 1px; }
+.btc-q { margin: 6px 0 0; padding-left: 20px; font-size: 14px; line-height: 1.55; }
+.btc-q li { margin-bottom: 4px; }
+.btc-miss { font-size: 13px; color: var(--color-fg-muted); border: 1px dashed var(--color-border-line); border-radius: 8px; padding: 8px 10px; margin: 8px 0; }
+
+@media (max-width: 640px) {
+  .btc-scroll > table { min-width: 600px; }
+  .btc-cards { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+  .btc-card .v { font-size: 18px; }
+  .btc-chip { min-height: 36px; }
+  .btc-sum { font-size: 13px; }
+}
